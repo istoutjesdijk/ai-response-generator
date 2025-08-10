@@ -1,0 +1,29 @@
+.ai-loading {
+  opacity: 0.6;
+  pointer-events: none;
+  position: relative;
+}
+
+.ai-loading:after {
+  content: '';
+  position: absolute;
+  right: -18px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border: 2px solid #999;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: ai-spin 0.8s linear infinite;
+}
+
+@keyframes ai-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}

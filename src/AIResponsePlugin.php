@@ -1,0 +1,111 @@
+<?php
+/*********************************************************************
+ * AI Response Generator Plugin
+ *
+ * Adds a "Generate Response" button to the agent ticket view which
+ * calls an OpenAI-compatible API using settings configured in the admin UI.
+ *********************************************************************/
+
+require_once(INCLUDE_DIR . 'class.plugin.php');
+require_once(__DIR__ . '/Config.php');
+
+class AIResponseGeneratorPlugin extends Plugin {
+    var $config_class = 'AIResponseGeneratorPluginConfig';
+
+    // Cache of the last-loaded active instance config (for ajax controller)
+    private static $active_config = null;
+    // Cache of all enabled instance configs by instance id
+    private static $configs = array();
+
+    function bootstrap() {
+        // Register signals
+        // 1) Add menu item into the ticket "More" menu
+        Signal::connect('ticket.view.more', array($this, 'onTicketViewMore'), 'Ticket');
+        // 2) Include JS/CSS on ticket view page
+        Signal::connect('object.view', array($this, 'onObjectView'), 'Ticket');
+        // 3) Extend SCP AJAX dispatcher with our endpoint
+        Signal::connect('ajax.scp', array($this, 'onAjaxScp'));
+
+        // Cache this instance's config for use by Ajax controller
+        // (Only runs for enabled instances)
+        $cfg = $this->getConfig();
+        if ($cfg) {
+            self::$active_config = $cfg;
+            $inst = $cfg->getInstance();
+            if ($inst && $inst->getId()) {
+                self::$configs[$inst->getId()] = $cfg;
+            }
+        }
+    }
+
+    public static function getActiveConfig() {
+        return self::$active_config;
+    }
+
+    public static function getAllConfigs() {
+        return self::$configs;
+    }
+
+    /**
+     * Inject a menu item in the ticket "More" dropdown list
+     * Signature: function($object, &$data)
+     */
+    function onTicketViewMore($ticket, &$data) {
+                // Only staff with reply permission should see the button
+                global $thisstaff;
+                if (!$thisstaff || !$thisstaff->isStaff()) return;
+                if (!$ticket || !method_exists($ticket, 'getId')) return;
+
+                // Deduplicate: only render one button per instance per request
+                static $rendered = array();
+                $configs = self::getAllConfigs();
+                if (!$configs) return;
+                foreach ($configs as $iid => $cfg) {
+                        if (isset($rendered[$iid])) continue; // Already rendered for this instance
+                        $rendered[$iid] = true;
+                        $inst = $cfg->getInstance();
+                        $name = $inst ? $inst->getName() : ('Instance '.$iid);
+                        ?>
+                        <li>
+                            <a class="ai-generate-reply" href="#ai/generate"
+                                 data-ticket-id="<?php echo (int)$ticket->getId(); ?>"
+                                 data-instance-id="<?php echo (int)$iid; ?>">
+                                <i class="icon-magic"></i>
+                                <?php echo __('AI Response'); ?> — <?php echo Format::htmlchars($name); ?>
+                            </a>
+                        </li>
+                        <?php
+                }
+    }
+
+    /**
+     * Include our JS/CSS on ticket view pages (agent panel)
+     */
+    function onObjectView($object, &$data) {
+    // Prevent duplicate inclusion of assets
+    static $included = false;
+    if ($included) return;
+    $included = true;
+    // Emit asset links. Attempt static files, plus a small inline bootstrap
+    $base = ROOT_PATH . 'include/plugins/ai-response-generator/';
+    $js = $base . 'assets/js/main.js?v=' . urlencode(GIT_VERSION);
+    $css = $base . 'assets/css/style.css?v=' . urlencode(GIT_VERSION);
+    echo sprintf('<link rel="stylesheet" type="text/css" href="%s"/>', $css);
+    echo sprintf('<script type="text/javascript" src="%s"></script>', $js);
+    // Inline bootstrap for route
+    ?>
+    <script type="text/javascript">
+    window.AIResponseGen = window.AIResponseGen || {};
+    window.AIResponseGen.ajaxEndpoint = 'ajax.php/ai/response';
+    </script>
+    <?php
+    }
+
+    /**
+     * Extend ajax dispatcher
+     */
+    function onAjaxScp($dispatcher) {
+        require_once(__DIR__ . '/AIAjax.php');
+        $dispatcher->append(url_post('^/ai/response$', array('AIAjaxController', 'generate')));
+    }
+}

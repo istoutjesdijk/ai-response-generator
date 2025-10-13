@@ -21,21 +21,21 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'label' => __('API URL'),
             'required' => true,
             'hint' => __('Base URL to an OpenAI-compatible API endpoint, e.g. https://api.openai.com/v1/chat/completions or your local server.'),
-            'configuration' => array('size' => 80, 'length' => 127),
+            'configuration' => array('size' => 80, 'length' => 255),
         ));
 
         $fields['api_key'] = new TextboxField(array(
             'label' => __('API Key'),
             'required' => false,
             'hint' => __('API key used for Authorization header.'),
-            'configuration' => array('size' => 80, 'length' => 127),
+            'configuration' => array('size' => 80, 'length' => 255),
         ));
 
         $fields['model'] = new TextboxField(array(
             'label' => __('Model Name'),
             'required' => true,
             'hint' => __('Name of the AI model to use (e.g. gpt-5-nano-2025-08-07).'),
-            'configuration' => array('size' => 80, 'length' => 127),
+            'configuration' => array('size' => 80, 'length' => 255),
         ));
 
         $fields['system_prompt'] = new TextareaField(array(

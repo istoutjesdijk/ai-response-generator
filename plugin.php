@@ -8,4 +8,5 @@ return array(
     'ost_version' =>    MAJOR_VERSION,
     'plugin' =>         'src/AIResponsePlugin.php:AIResponseGeneratorPlugin',
     'include_path' =>   '',
+    'url' =>            'https://github.com/mhajder/ai-response-generator',
 );

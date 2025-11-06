@@ -17,7 +17,8 @@ class OpenAIClient {
      * $messages: array of [role => 'system'|'user'|'assistant', content => '...']
      * Returns string reply content
      */
-    function generateResponse($model, array $messages, $temperature = 0.2, $max_tokens = 512) {
+    // $timeout: timeout in seconds for the API request (default: 60)
+    function generateResponse($model, array $messages, $temperature = 0.2, $max_tokens = 512, $max_tokens_param = 'max_tokens', $timeout = 60) {
         // Detect whether the given base URL points to a specific endpoint
         // If it appears to be the bare API root, append /chat/completions
         $url = $this->baseUrl;
@@ -29,8 +30,9 @@ class OpenAIClient {
             'model' => $model,
             'messages' => $messages,
             'temperature' => $temperature,
-            'max_tokens' => $max_tokens,
         );
+    // Add the correct parameter name for max tokens
+        $payload[$max_tokens_param ?: 'max_tokens'] = $max_tokens;
 
         $headers = array('Content-Type: application/json');
         if ($this->apiKey)
@@ -40,7 +42,7 @@ class OpenAIClient {
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    curl_setopt($ch, CURLOPT_TIMEOUT, $timeout); // configurable timeout
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
 
         $resp = curl_exec($ch);

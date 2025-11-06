@@ -38,6 +38,20 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'configuration' => array('size' => 80, 'length' => 255),
         ));
 
+        $fields['max_tokens_param'] = new TextboxField(array(
+            'label' => __('Max Tokens Parameter Name'),
+            'required' => false,
+            'hint' => __('Parameter name for max tokens (e.g. max_tokens or max_completion_tokens). Default: max_tokens'),
+            'configuration' => array('size' => 40, 'length' => 64),
+        ));
+
+        $fields['max_tokens'] = new TextboxField(array(
+            'label' => __('Max Tokens'),
+            'required' => false,
+            'hint' => __('Maximum number of tokens for the AI response (default: 512).'),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => '512'),
+        ));
+
         $fields['system_prompt'] = new TextareaField(array(
             'label' => __('AI System Prompt'),
             'required' => false,
@@ -71,6 +85,20 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             ),
         ));
 
+        $fields['temperature'] = new TextboxField(array(
+            'label' => __('Temperature'),
+            'required' => false,
+            'hint' => __('Temperature for the AI model (e.g. 1 for default, 0.2 for more deterministic). Some models only support 1.'),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => '1'),
+        ));
+
+        // Timeout for the API request in seconds (default: 60)
+        $fields['timeout'] = new TextboxField(array(
+            'label' => __('Timeout (seconds)'),
+            'required' => false,
+            'hint' => __('Timeout for the API request in seconds (default: 60).'),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => '60'),
+        ));
         return $fields;
     }
 }

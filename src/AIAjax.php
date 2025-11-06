@@ -37,9 +37,34 @@ class AIAjaxController extends AjaxController {
         if (!$cfg)
             Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
 
-        $api_url = rtrim($cfg->get('api_url'), '/');
-        $api_key = $cfg->get('api_key');
-        $model   = $cfg->get('model');
+
+    $api_url = rtrim($cfg->get('api_url'), '/');
+    $api_key = $cfg->get('api_key');
+    $model   = $cfg->get('model');
+    $max_tokens_param = trim((string)$cfg->get('max_tokens_param')) ?: 'max_tokens';
+
+    $temperature = $cfg->get('temperature');
+    if ($temperature === null || $temperature === '' || !is_numeric($temperature)) {
+        $temperature = 1;
+    } else {
+        $temperature = floatval($temperature);
+    }
+
+    // Read max_tokens from config, default to 512 if not set or invalid
+    $max_tokens = $cfg->get('max_tokens');
+    if ($max_tokens === null || $max_tokens === '' || !is_numeric($max_tokens) || $max_tokens < 1) {
+        $max_tokens = 512;
+    } else {
+        $max_tokens = intval($max_tokens);
+    }
+
+    // Read timeout from config, default to 60 seconds if not set or invalid
+    $timeout = $cfg->get('timeout');
+    if ($timeout === null || $timeout === '' || !is_numeric($timeout) || $timeout < 1) {
+        $timeout = 60;
+    } else {
+        $timeout = intval($timeout);
+    }
 
         if (!$api_url || !$model)
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
@@ -70,8 +95,13 @@ class AIAjaxController extends AjaxController {
             $messages[] = array('role' => 'system', 'content' => "Additional knowledge base context:\n".$rag_text);
 
         try {
+            // Validatie: sommige modellen ondersteunen alleen temperature=1
+            if (stripos($model, 'gpt-5-nano') !== false && $temperature != 1) {
+                throw new Exception(__('This model only supports temperature=1.'));
+            }
             $client = new OpenAIClient($api_url, $api_key);
-            $reply = $client->generateResponse($model, $messages);
+            // Pass the configurable timeout to the OpenAI client
+            $reply = $client->generateResponse($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout);
             if (!$reply)
                 throw new Exception(__('Empty response from model'));
 

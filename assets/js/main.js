@@ -1,4 +1,8 @@
 (function () {
+  // Ensure we only ever bind handlers once even if the script is injected multiple times (pjax reloads)
+  window.AIResponseGen = window.AIResponseGen || {};
+  // Track in-flight requests per ticket/instance to dedupe network calls
+  window.AIResponseGen.inflight = window.AIResponseGen.inflight || {};
   function setReplyText(text) {
     var $ta = $('#response');
     if (!$ta.length) return false;
@@ -33,21 +37,36 @@
     }
   }
 
-  $(document).on('click', 'a.ai-generate-reply', function (e) {
+  // Remove any previous namespaced handler and (re)bind once
+  // Always unbind before binding (namespaced) to avoid duplicates
+  $(document).off('click.ai-gen', 'a.ai-generate-reply');
+  $(document).on('click.ai-gen', 'a.ai-generate-reply', function (e) {
     e.preventDefault();
     var $a = $(this);
     var tid = $a.data('ticket-id');
     if (!tid) return false;
+    var iid = ($a.data('instance-id') || '').toString();
+    var key = tid + ':' + iid;
+
+    // Re-entrancy guard (covers accidental double fires from duplicate bindings or rapid clicks)
+    if ($a.data('aiBusy')) return false;
+    // In-flight dedupe across handlers/elements for the same ticket/instance
+    if (window.AIResponseGen.inflight[key]) return false;
+    $a.data('aiBusy', true);
 
     setLoading($a, true);
     var url = (window.AIResponseGen && window.AIResponseGen.ajaxEndpoint) || 'ajax.php/ai/response';
 
-    $.ajax({
+    var jq = $.ajax({
       url: url,
       method: 'POST',
-      data: { ticket_id: tid, instance_id: $a.data('instance-id') || '' },
+      data: { ticket_id: tid, instance_id: iid },
       dataType: 'json'
-    }).done(function (resp) {
+    });
+    // mark as in-flight
+    window.AIResponseGen.inflight[key] = jq;
+
+    jq.done(function (resp) {
       if (resp && resp.ok) {
         if (!setReplyText(resp.text || '')) {
           alert('AI response generated, but reply box not found.');
@@ -64,8 +83,12 @@
       alert(msg);
     }).always(function () {
       setLoading($a, false);
+      $a.data('aiBusy', false);
+      delete window.AIResponseGen.inflight[key];
     });
 
     return false;
   });
+
+  window.AIResponseGen.bound = true;
 })();

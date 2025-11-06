@@ -10,17 +10,29 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
     function getFormOptions() {
         return array(
             'title' => __('AI Response Generator Settings'),
-            'instructions' => __('Configure the connection to your OpenAI-compatible server.'),
+            'instructions' => __('Configure the connection to your OpenAI-compatible or Anthropic Claude server.'),
         );
     }
 
     function getFields() {
         $fields = array();
 
+        // Provider selector (OpenAI-compatible vs Anthropic Claude)
+        $fields['provider'] = new ChoiceField(array(
+            'label' => __('Provider'),
+            'choices' => array(
+                'openai' => __('OpenAI-compatible'),
+                'anthropic' => __('Anthropic Claude'),
+            ),
+            'default' => 'openai',
+            'required' => true,
+            'hint' => __('Choose your API provider. Use OpenAI-compatible for OpenAI/OpenRouter/Ollama, or Anthropic for Claude.'),
+        ));
+
         $fields['api_url'] = new TextboxField(array(
             'label' => __('API URL'),
             'required' => true,
-            'hint' => __('Base URL to an OpenAI-compatible API endpoint, e.g. https://api.openai.com/v1/chat/completions or your local server.'),
+            'hint' => __('Base URL to your API endpoint. Examples: OpenAI-compatible -> https://api.openai.com/v1/chat/completions, Anthropic -> https://api.anthropic.com/v1/messages'),
             'configuration' => array('size' => 80, 'length' => 255),
         ));
 
@@ -38,10 +50,18 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'configuration' => array('size' => 80, 'length' => 255),
         ));
 
+        // Anthropic API version (only used when provider=anthropic)
+        $fields['anthropic_version'] = new TextboxField(array(
+            'label' => __('Anthropic Version'),
+            'required' => false,
+            'hint' => __('Anthropic API version header (Anthropic-Version). Default: 2023-06-01'),
+            'configuration' => array('size' => 20, 'length' => 32, 'placeholder' => '2023-06-01'),
+        ));
+
         $fields['max_tokens_param'] = new TextboxField(array(
             'label' => __('Max Tokens Parameter Name'),
             'required' => false,
-            'hint' => __('Parameter name for max tokens (e.g. max_tokens or max_completion_tokens). Default: max_tokens'),
+            'hint' => __('Parameter name for max tokens (e.g. max_tokens or max_completion_tokens). For Anthropic this is always max_tokens. Default: max_tokens'),
             'configuration' => array('size' => 40, 'length' => 64),
         ));
 

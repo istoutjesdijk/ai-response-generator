@@ -100,8 +100,17 @@ class AIAjaxController extends AjaxController {
                 throw new Exception(__('This model only supports temperature=1.'));
             }
             $client = new OpenAIClient($api_url, $api_key);
-            // Pass the configurable timeout to the OpenAI client
-            $reply = $client->generateResponse($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout);
+            // Provider selection and Anthropic version (from config)
+            $provider = $cfg->get('provider') ?: 'auto';
+            // Extra safety: auto-detect Anthropic by URL or model even if UI value didn't persist
+            if ($provider !== 'anthropic') {
+                if (stripos($api_url, 'anthropic.com') !== false || preg_match('#/v1/messages/?$#', $api_url) || stripos($model, 'claude') === 0) {
+                    $provider = 'anthropic';
+                }
+            }
+            $anthVersion = trim((string)$cfg->get('anthropic_version')) ?: '2023-06-01';
+            // Pass the configurable timeout and provider info to the client
+            $reply = $client->generateResponse($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $provider, $anthVersion);
             if (!$reply)
                 throw new Exception(__('Empty response from model'));
 

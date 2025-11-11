@@ -62,30 +62,79 @@
     }, 4000);
   }
 
-  // Remove any previous namespaced handler and (re)bind once
-  // Always unbind before binding (namespaced) to avoid duplicates
-  $(document).off('click.ai-gen', 'a.ai-generate-reply');
-  $(document).on('click.ai-gen', 'a.ai-generate-reply', function (e) {
-    e.preventDefault();
-    var $a = $(this);
-    var tid = $a.data('ticket-id');
-    if (!tid) return false;
-    var iid = ($a.data('instance-id') || '').toString();
-    var key = tid + ':' + iid;
+  function showInstructionsModal(callback) {
+    // Create modal HTML
+    var modalHtml =
+      '<div class="ai-modal-overlay">' +
+        '<div class="ai-modal">' +
+          '<div class="ai-modal-header">' +
+            '<h3>Additional Instructions for AI</h3>' +
+            '<button class="ai-modal-close">&times;</button>' +
+          '</div>' +
+          '<div class="ai-modal-body">' +
+            '<label for="ai-extra-instructions">Enter additional instructions (optional):</label>' +
+            '<textarea id="ai-extra-instructions" class="ai-instructions-textarea" ' +
+              'placeholder="Example: Offer the customer a refund as a solution"></textarea>' +
+          '</div>' +
+          '<div class="ai-modal-footer">' +
+            '<button class="ai-modal-btn ai-modal-cancel">Cancel</button>' +
+            '<button class="ai-modal-btn ai-modal-generate">Generate Response</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
 
-    // Re-entrancy guard (covers accidental double fires from duplicate bindings or rapid clicks)
-    if ($a.data('aiBusy')) return false;
-    // In-flight dedupe across handlers/elements for the same ticket/instance
-    if (window.AIResponseGen.inflight[key]) return false;
-    $a.data('aiBusy', true);
+    var $modal = $(modalHtml);
+    $('body').append($modal);
+
+    // Focus on textarea
+    setTimeout(function() {
+      $modal.find('#ai-extra-instructions').focus();
+    }, 100);
+
+    // Close handlers
+    $modal.find('.ai-modal-close, .ai-modal-cancel').on('click', function() {
+      $modal.remove();
+      callback(null);
+    });
+
+    // Generate handler
+    $modal.find('.ai-modal-generate').on('click', function() {
+      var instructions = $modal.find('#ai-extra-instructions').val().trim();
+      $modal.remove();
+      callback(instructions);
+    });
+
+    // Close on overlay click
+    $modal.on('click', function(e) {
+      if ($(e.target).hasClass('ai-modal-overlay')) {
+        $modal.remove();
+        callback(null);
+      }
+    });
+
+    // Enter key to submit
+    $modal.find('#ai-extra-instructions').on('keydown', function(e) {
+      if (e.key === 'Enter' && e.ctrlKey) {
+        $modal.find('.ai-modal-generate').trigger('click');
+      }
+    });
+  }
+
+  function generateAIResponse($a, tid, iid, extraInstructions) {
+    var key = tid + ':' + iid;
 
     setLoading($a, true);
     var url = (window.AIResponseGen && window.AIResponseGen.ajaxEndpoint) || 'ajax.php/ai/response';
 
+    var requestData = { ticket_id: tid, instance_id: iid };
+    if (extraInstructions) {
+      requestData.extra_instructions = extraInstructions;
+    }
+
     var jq = $.ajax({
       url: url,
       method: 'POST',
-      data: { ticket_id: tid, instance_id: iid },
+      data: requestData,
       dataType: 'json'
     });
     // mark as in-flight
@@ -111,6 +160,45 @@
       $a.data('aiBusy', false);
       delete window.AIResponseGen.inflight[key];
     });
+
+    return false;
+  }
+
+  // Remove any previous namespaced handler and (re)bind once
+  // Always unbind before binding (namespaced) to avoid duplicates
+  $(document).off('click.ai-gen', 'a.ai-generate-reply');
+  $(document).on('click.ai-gen', 'a.ai-generate-reply', function (e) {
+    e.preventDefault();
+    var $a = $(this);
+    var tid = $a.data('ticket-id');
+    if (!tid) return false;
+    var iid = ($a.data('instance-id') || '').toString();
+    var showPopup = $a.data('show-popup') !== '0' && $a.data('show-popup') !== 0;
+    var key = tid + ':' + iid;
+
+    // Re-entrancy guard (covers accidental double fires from duplicate bindings or rapid clicks)
+    if ($a.data('aiBusy')) return false;
+    // In-flight dedupe across handlers/elements for the same ticket/instance
+    if (window.AIResponseGen.inflight[key]) return false;
+    $a.data('aiBusy', true);
+
+    // Check if popup should be shown
+    if (showPopup) {
+      // Show modal to get extra instructions
+      showInstructionsModal(function(extraInstructions) {
+        // User cancelled
+        if (extraInstructions === null) {
+          $a.data('aiBusy', false);
+          return;
+        }
+
+        // Proceed with generation
+        generateAIResponse($a, tid, iid, extraInstructions);
+      });
+    } else {
+      // Generate directly without popup
+      generateAIResponse($a, tid, iid, '');
+    }
 
     return false;
   });

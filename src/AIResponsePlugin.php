@@ -80,11 +80,14 @@ class AIResponseGeneratorPlugin extends Plugin {
                         $rendered[$iid] = true;
                         $inst = $cfg->getInstance();
                         $name = $inst ? $inst->getName() : ('Instance '.$iid);
+                        // BooleanField returns true/false or 1/0
+                        $showPopup = (bool)$cfg->get('show_instructions_popup');
                         ?>
                         <li>
                             <a class="ai-generate-reply" href="#ai/generate"
                                  data-ticket-id="<?php echo (int)$ticket->getId(); ?>"
-                                 data-instance-id="<?php echo (int)$iid; ?>">
+                                 data-instance-id="<?php echo (int)$iid; ?>"
+                                 data-show-popup="<?php echo $showPopup ? '1' : '0'; ?>">
                                 <i class="icon-magic"></i>
                                 <?php echo __('AI Response'); ?> — <?php echo Format::htmlchars($name); ?>
                             </a>

@@ -34,7 +34,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'configuration' => array('size' => 80, 'length' => 255),
         ));
 
-        $fields['api_key'] = new PasswordField(array(
+        $fields['api_key'] = new TextboxField(array(
             'label' => __('API Key'),
             'required' => false,
             'hint' => __('API key used for Authorization header.'),
@@ -117,6 +117,15 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'hint' => __('Timeout for the API request in seconds (default: 60).'),
             'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => '60'),
         ));
+
+        $fields['show_instructions_popup'] = new BooleanField(array(
+            'label' => __('Show Instructions Popup'),
+            'default' => true,
+            'configuration' => array(
+                'desc' => __('When enabled, users can provide additional context before generating a response (e.g., "Offer customer a refund").')
+            )
+        ));
+
         return $fields;
     }
 }

@@ -4,23 +4,44 @@
  * Supports OpenAI Chat Completions compatible APIs.
  *********************************************************************/
 
+require_once(__DIR__ . '/../src/Constants.php');
+
 class OpenAIClient {
     private $baseUrl;
     private $apiKey;
 
+    /**
+     * Constructor
+     *
+     * @param string $baseUrl Base API URL
+     * @param string|null $apiKey Optional API key for authentication
+     */
     function __construct($baseUrl, $apiKey=null) {
         $this->baseUrl = rtrim($baseUrl, '/');
         $this->apiKey = $apiKey;
     }
 
     /**
-     * $messages: array of [role => 'system'|'user'|'assistant', content => '...']
-     * Returns string reply content
+     * Generates AI response using OpenAI or Anthropic API
+     *
+     * @param string $model Model name to use (e.g., 'gpt-4', 'claude-3-opus')
+     * @param array $messages Array of message objects with 'role' and 'content' keys
+     * @param float|null $temperature Temperature for response generation (0.0-2.0)
+     * @param int|null $max_tokens Maximum tokens to generate
+     * @param string|null $max_tokens_param Parameter name for max tokens (API-specific)
+     * @param int|null $timeout Request timeout in seconds
+     * @param string $provider Provider type: 'openai', 'anthropic', or 'auto' for auto-detection
+     * @param string|null $anthropicVersion Anthropic API version header value
+     * @return string Generated response text
+     * @throws Exception On API errors or network failures
      */
-    // $timeout: timeout in seconds for the API request (default: 60)
-    // $provider: 'openai' | 'anthropic' | 'auto'
-    // $anthropicVersion: version string for Anthropic-Version header (default '2023-06-01')
-    function generateResponse($model, array $messages, $temperature = 0.2, $max_tokens = 512, $max_tokens_param = 'max_tokens', $timeout = 60, $provider = 'auto', $anthropicVersion = '2023-06-01') {
+    function generateResponse($model, array $messages, $temperature = null, $max_tokens = null, $max_tokens_param = null, $timeout = null, $provider = 'auto', $anthropicVersion = null) {
+        // Apply defaults
+        $temperature = $temperature ?? AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
+        $max_tokens = $max_tokens ?? AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
+        $max_tokens_param = $max_tokens_param ?? AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS_PARAM;
+        $timeout = $timeout ?? AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
+        $anthropicVersion = $anthropicVersion ?? AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION;
         // Auto-detect provider if requested
         if ($provider === 'auto') {
             if (stripos($this->baseUrl, 'anthropic.com') !== false || stripos($model, 'claude') === 0 || preg_match('#/v1/messages$#', $this->baseUrl)) {
@@ -95,7 +116,7 @@ class OpenAIClient {
             curl_close($ch);
 
             $json = JsonDataParser::decode($resp, true);
-            if ($code >= 400)
+            if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD)
                 throw new Exception('API error: HTTP ' . $code . ' (Endpoint: ' . (parse_url($url, PHP_URL_PATH) ?: '') . ') ' . ($json['error']['message'] ?? $resp));
 
             // Anthropic messages response shape
@@ -153,7 +174,7 @@ class OpenAIClient {
         curl_close($ch);
 
         $json = JsonDataParser::decode($resp, true);
-        if ($code >= 400)
+        if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD)
             throw new Exception('API error: HTTP ' . $code . ' (Endpoint: ' . (parse_url($url, PHP_URL_PATH) ?: '') . ') ' . ($json['error']['message'] ?? $resp));
 
         // OpenAI-style response

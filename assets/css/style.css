@@ -27,3 +27,32 @@
     transform: rotate(360deg);
   }
 }
+
+/* Toast notifications */
+.ai-toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 12px 24px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 14px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 10000;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: all 0.3s ease;
+}
+
+.ai-toast-show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ai-toast-error {
+  background-color: #d9534f;
+}
+
+.ai-toast-success {
+  background-color: #5cb85c;
+}

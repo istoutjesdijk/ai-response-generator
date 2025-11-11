@@ -7,9 +7,15 @@ require_once(INCLUDE_DIR . 'class.ajax.php');
 require_once(INCLUDE_DIR . 'class.ticket.php');
 require_once(INCLUDE_DIR . 'class.thread.php');
 require_once(__DIR__ . '/../api/OpenAIClient.php');
+require_once(__DIR__ . '/Constants.php');
 
 class AIAjaxController extends AjaxController {
 
+    /**
+     * Generates AI response for a ticket
+     *
+     * @return string JSON encoded response
+     */
     function generate() {
         global $thisstaff;
         $this->staffOnly();
@@ -45,23 +51,23 @@ class AIAjaxController extends AjaxController {
 
     $temperature = $cfg->get('temperature');
     if ($temperature === null || $temperature === '' || !is_numeric($temperature)) {
-        $temperature = 1;
+        $temperature = AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
     } else {
         $temperature = floatval($temperature);
     }
 
-    // Read max_tokens from config, default to 512 if not set or invalid
+    // Read max_tokens from config, default if not set or invalid
     $max_tokens = $cfg->get('max_tokens');
     if ($max_tokens === null || $max_tokens === '' || !is_numeric($max_tokens) || $max_tokens < 1) {
-        $max_tokens = 512;
+        $max_tokens = AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
     } else {
         $max_tokens = intval($max_tokens);
     }
 
-    // Read timeout from config, default to 60 seconds if not set or invalid
+    // Read timeout from config, default if not set or invalid
     $timeout = $cfg->get('timeout');
     if ($timeout === null || $timeout === '' || !is_numeric($timeout) || $timeout < 1) {
-        $timeout = 60;
+        $timeout = AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
     } else {
         $timeout = intval($timeout);
     }
@@ -74,9 +80,10 @@ class AIAjaxController extends AjaxController {
         $entries = $thread ? $thread->getEntries() : array();
         $messages = array();
         $count = 0;
+
         foreach ($entries as $E) {
             // Cap to recent context to avoid huge prompts
-            if ($count++ > 20) break;
+            if ($count++ >= AIResponseGeneratorConstants::MAX_THREAD_ENTRIES) break;
             $type = $E->getType();
             $body = ThreadEntryBody::clean($E->getBody());
             $who  = $E->getPoster();
@@ -95,20 +102,14 @@ class AIAjaxController extends AjaxController {
             $messages[] = array('role' => 'system', 'content' => "Additional knowledge base context:\n".$rag_text);
 
         try {
-            // Validatie: sommige modellen ondersteunen alleen temperature=1
+            // Validation: some models only support temperature=1
             if (stripos($model, 'gpt-5-nano') !== false && $temperature != 1) {
                 throw new Exception(__('This model only supports temperature=1.'));
             }
             $client = new OpenAIClient($api_url, $api_key);
-            // Provider selection and Anthropic version (from config)
-            $provider = $cfg->get('provider') ?: 'auto';
-            // Extra safety: auto-detect Anthropic by URL or model even if UI value didn't persist
-            if ($provider !== 'anthropic') {
-                if (stripos($api_url, 'anthropic.com') !== false || preg_match('#/v1/messages/?$#', $api_url) || stripos($model, 'claude') === 0) {
-                    $provider = 'anthropic';
-                }
-            }
-            $anthVersion = trim((string)$cfg->get('anthropic_version')) ?: '2023-06-01';
+            // Let the client auto-detect the provider
+            $provider = 'auto';
+            $anthVersion = trim((string)$cfg->get('anthropic_version')) ?: AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION;
             // Pass the configurable timeout and provider info to the client
             $reply = $client->generateResponse($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $provider, $anthVersion);
             if (!$reply)
@@ -129,17 +130,31 @@ class AIAjaxController extends AjaxController {
         }
     }
 
+    /**
+     * Loads and processes RAG (Retrieval-Augmented Generation) content from config
+     *
+     * @param PluginConfig $cfg Plugin configuration instance
+     * @return string RAG content, truncated if necessary
+     */
     private function loadRagDocuments($cfg) {
         $rag = trim((string)$cfg->get('rag_content'));
         if (!$rag) return '';
-        // Optionally limit to 20,000 chars
-        $limit_chars = 20000;
-        if (strlen($rag) > $limit_chars) {
-            $rag = substr($rag, 0, $limit_chars) . "\n... (truncated)";
+        // Limit RAG content length to prevent excessive prompt sizes
+        if (strlen($rag) > AIResponseGeneratorConstants::MAX_RAG_CONTENT_LENGTH) {
+            $rag = substr($rag, 0, AIResponseGeneratorConstants::MAX_RAG_CONTENT_LENGTH) . "\n... (truncated)";
         }
         return $rag;
     }
 
+    /**
+     * Expands template with ticket and AI response data
+     *
+     * @param string $template Template string with placeholders
+     * @param Ticket $ticket Ticket instance
+     * @param string $aiText Generated AI response text
+     * @param Staff|null $staff Staff member (agent) instance
+     * @return string Expanded template with replaced placeholders
+     */
     private function expandTemplate($template, Ticket $ticket, $aiText, $staff=null) {
         $user = $ticket->getOwner();
         $agentName = '';

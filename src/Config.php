@@ -7,6 +7,11 @@ require_once(INCLUDE_DIR . 'class.forms.php');
 
 class AIResponseGeneratorPluginConfig extends PluginConfig {
 
+    /**
+     * Returns configuration form options
+     *
+     * @return array Form configuration options
+     */
     function getFormOptions() {
         return array(
             'title' => __('AI Response Generator Settings'),
@@ -14,20 +19,13 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
         );
     }
 
+    /**
+     * Returns configuration form fields
+     *
+     * @return array Configuration form fields
+     */
     function getFields() {
         $fields = array();
-
-        // Provider selector (OpenAI-compatible vs Anthropic Claude)
-        $fields['provider'] = new ChoiceField(array(
-            'label' => __('Provider'),
-            'choices' => array(
-                'openai' => __('OpenAI-compatible'),
-                'anthropic' => __('Anthropic Claude'),
-            ),
-            'default' => 'openai',
-            'required' => true,
-            'hint' => __('Choose your API provider. Use OpenAI-compatible for OpenAI/OpenRouter/Ollama, or Anthropic for Claude.'),
-        ));
 
         $fields['api_url'] = new TextboxField(array(
             'label' => __('API URL'),
@@ -36,7 +34,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'configuration' => array('size' => 80, 'length' => 255),
         ));
 
-        $fields['api_key'] = new TextboxField(array(
+        $fields['api_key'] = new PasswordField(array(
             'label' => __('API Key'),
             'required' => false,
             'hint' => __('API key used for Authorization header.'),

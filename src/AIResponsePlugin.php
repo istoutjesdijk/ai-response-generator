@@ -17,6 +17,9 @@ class AIResponseGeneratorPlugin extends Plugin {
     // Cache of all enabled instance configs by instance id
     private static $configs = array();
 
+    /**
+     * Bootstrap the plugin and register signal handlers
+     */
     function bootstrap() {
         // Register signals
         // 1) Add menu item into the ticket "More" menu
@@ -38,17 +41,29 @@ class AIResponseGeneratorPlugin extends Plugin {
         }
     }
 
+    /**
+     * Gets the active plugin configuration
+     *
+     * @return PluginConfig|null Active configuration instance
+     */
     public static function getActiveConfig() {
         return self::$active_config;
     }
 
+    /**
+     * Gets all enabled plugin instance configurations
+     *
+     * @return array Array of configurations indexed by instance ID
+     */
     public static function getAllConfigs() {
         return self::$configs;
     }
 
     /**
-     * Inject a menu item in the ticket "More" dropdown list
-     * Signature: function($object, &$data)
+     * Signal handler: Injects menu item in ticket "More" dropdown
+     *
+     * @param Ticket $ticket Ticket object
+     * @param array $data Menu data passed by reference
      */
     function onTicketViewMore($ticket, &$data) {
                 // Only staff with reply permission should see the button
@@ -79,7 +94,10 @@ class AIResponseGeneratorPlugin extends Plugin {
     }
 
     /**
-     * Include our JS/CSS on ticket view pages (agent panel)
+     * Signal handler: Includes JS/CSS assets on ticket view pages
+     *
+     * @param object $object Viewed object (e.g., Ticket)
+     * @param array $data View data passed by reference
      */
     function onObjectView($object, &$data) {
     // Prevent duplicate inclusion of assets
@@ -102,7 +120,9 @@ class AIResponseGeneratorPlugin extends Plugin {
     }
 
     /**
-     * Extend ajax dispatcher
+     * Signal handler: Extends AJAX dispatcher with plugin routes
+     *
+     * @param AjaxDispatcher $dispatcher AJAX dispatcher instance
      */
     function onAjaxScp($dispatcher) {
         require_once(__DIR__ . '/AIAjax.php');

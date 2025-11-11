@@ -37,6 +37,31 @@
     }
   }
 
+  function showToast(message, type) {
+    type = type || 'error'; // 'success' or 'error'
+
+    // Try osTicket's native alertBox if available
+    if (typeof alertBox !== 'undefined') {
+      alertBox(message, type === 'error' ? 'warn' : 'success');
+      return;
+    }
+
+    // Fallback to custom toast implementation
+    var $toast = $('<div class="ai-toast ai-toast-' + type + '"></div>').text(message);
+    $('body').append($toast);
+
+    setTimeout(function() {
+      $toast.addClass('ai-toast-show');
+    }, 10);
+
+    setTimeout(function() {
+      $toast.removeClass('ai-toast-show');
+      setTimeout(function() {
+        $toast.remove();
+      }, 300);
+    }, 4000);
+  }
+
   // Remove any previous namespaced handler and (re)bind once
   // Always unbind before binding (namespaced) to avoid duplicates
   $(document).off('click.ai-gen', 'a.ai-generate-reply');
@@ -69,10 +94,10 @@
     jq.done(function (resp) {
       if (resp && resp.ok) {
         if (!setReplyText(resp.text || '')) {
-          alert('AI response generated, but reply box not found.');
+          showToast('AI response generated, but reply box not found.', 'error');
         }
       } else {
-        alert((resp && resp.error) ? resp.error : 'Failed to generate response');
+        showToast((resp && resp.error) ? resp.error : 'Failed to generate response', 'error');
       }
     }).fail(function (xhr) {
       var msg = 'Request failed';
@@ -80,7 +105,7 @@
         var r = JSON.parse(xhr.responseText);
         if (r && r.error) msg = r.error;
       } catch (e) { }
-      alert(msg);
+      showToast(msg, 'error');
     }).always(function () {
       setLoading($a, false);
       $a.data('aiBusy', false);

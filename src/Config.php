@@ -118,6 +118,13 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => '60'),
         ));
 
+        $fields['max_thread_entries'] = new TextboxField(array(
+            'label' => __('Max Thread Entries'),
+            'required' => false,
+            'hint' => __('Maximum number of ticket messages to include in the AI context (default: 20). Lower values reduce API costs but may miss context.'),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => '20'),
+        ));
+
         $fields['show_instructions_popup'] = new BooleanField(array(
             'label' => __('Show Instructions Popup'),
             'default' => true,

@@ -75,15 +75,35 @@ class AIAjaxController extends AjaxController {
         if (!$api_url || !$model)
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
 
-        // Build prompt using latest thread entries
+        // Read max_thread_entries from config, default if not set or invalid
+        $max_thread_entries = $cfg->get('max_thread_entries');
+        if ($max_thread_entries === null || $max_thread_entries === '' || !is_numeric($max_thread_entries) || $max_thread_entries < 1) {
+            $max_thread_entries = AIResponseGeneratorConstants::MAX_THREAD_ENTRIES;
+        } else {
+            $max_thread_entries = intval($max_thread_entries);
+        }
+
+        // Build messages array starting with system prompt
+        $messages = array();
+
+        // Append instruction for the model (from config or default)
+        $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
+        $messages[] = array('role' => 'system', 'content' => $system);
+
+        // Add extra instructions from user if provided - FIRST as user message
+        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
+        if ($extra_instructions) {
+            $messages[] = array('role' => 'user', 'content' => "Special instructions for this response: " . $extra_instructions);
+        }
+
+        // Build thread context using latest thread entries
         $thread = $ticket->getThread();
         $entries = $thread ? $thread->getEntries() : array();
-        $messages = array();
         $count = 0;
 
         foreach ($entries as $E) {
-            // Cap to recent context to avoid huge prompts
-            if ($count++ >= AIResponseGeneratorConstants::MAX_THREAD_ENTRIES) break;
+            // Cap to recent context to avoid huge prompts (now configurable)
+            if ($count++ >= $max_thread_entries) break;
             $type = $E->getType();
             $body = ThreadEntryBody::clean($E->getBody());
             $who  = $E->getPoster();
@@ -92,18 +112,7 @@ class AIAjaxController extends AjaxController {
             $messages[] = array('role' => $role, 'content' => sprintf('[%s] %s', $who, $body));
         }
 
-        // Append instruction for the model (from config or default)
-        $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
-
-        // Add extra instructions from user if provided
-        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
-        if ($extra_instructions) {
-            $system .= "\n\nAdditional instructions for this response: " . $extra_instructions;
-        }
-
-        array_unshift($messages, array('role' => 'system', 'content' => $system));
-
-        // Load RAG documents content (if any)
+        // Load RAG documents content (if any) - last
         $rag_text = $this->loadRagDocuments($cfg);
         if ($rag_text)
             $messages[] = array('role' => 'system', 'content' => "Additional knowledge base context:\n".$rag_text);

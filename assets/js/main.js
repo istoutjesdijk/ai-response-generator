@@ -63,18 +63,22 @@
   }
 
   function showInstructionsModal(callback) {
-    // Create modal HTML
+    // Create modal HTML - osTicket dialog style
     var modalHtml =
       '<div class="ai-modal-overlay">' +
         '<div class="ai-modal">' +
           '<div class="ai-modal-header">' +
-            '<h3>Additional Instructions for AI</h3>' +
-            '<button class="ai-modal-close">&times;</button>' +
+            '<h3>AI Response Instructions</h3>' +
+            '<button class="ai-modal-close" title="Close">&times;</button>' +
           '</div>' +
           '<div class="ai-modal-body">' +
-            '<label for="ai-extra-instructions">Enter additional instructions (optional):</label>' +
+            '<label for="ai-extra-instructions">Additional context or instructions:</label>' +
             '<textarea id="ai-extra-instructions" class="ai-instructions-textarea" ' +
-              'placeholder="Example: Offer the customer a refund as a solution"></textarea>' +
+              'placeholder="Example: Offer the customer a refund and apologize for the inconvenience&#10;&#10;Leave empty to generate a response based on the conversation history alone."></textarea>' +
+            '<div style="margin-top: 12px; padding: 10px; background-color: #f9f9f9; border-left: 3px solid #0e76a8; font-size: 12px; color: #666; border-radius: 3px;">' +
+              '<strong style="color: #444;">Tip:</strong> You can provide specific guidance like tone (formal/casual), actions to take (refund, escalate), ' +
+              'or information to include. The AI will use the ticket conversation history along with your instructions.' +
+            '</div>' +
           '</div>' +
           '<div class="ai-modal-footer">' +
             '<button class="ai-modal-btn ai-modal-cancel">Cancel</button>' +
@@ -86,36 +90,49 @@
     var $modal = $(modalHtml);
     $('body').append($modal);
 
-    // Focus on textarea
+    // Focus on textarea after animation
     setTimeout(function() {
       $modal.find('#ai-extra-instructions').focus();
-    }, 100);
+    }, 350);
 
     // Close handlers
     $modal.find('.ai-modal-close, .ai-modal-cancel').on('click', function() {
-      $modal.remove();
+      $modal.fadeOut(200, function() {
+        $modal.remove();
+      });
       callback(null);
     });
 
     // Generate handler
     $modal.find('.ai-modal-generate').on('click', function() {
       var instructions = $modal.find('#ai-extra-instructions').val().trim();
-      $modal.remove();
+      $modal.fadeOut(200, function() {
+        $modal.remove();
+      });
       callback(instructions);
     });
 
     // Close on overlay click
     $modal.on('click', function(e) {
       if ($(e.target).hasClass('ai-modal-overlay')) {
-        $modal.remove();
+        $modal.fadeOut(200, function() {
+          $modal.remove();
+        });
         callback(null);
       }
     });
 
-    // Enter key to submit
+    // Keyboard shortcuts
     $modal.find('#ai-extra-instructions').on('keydown', function(e) {
-      if (e.key === 'Enter' && e.ctrlKey) {
+      // Ctrl+Enter or Cmd+Enter to submit
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
         $modal.find('.ai-modal-generate').trigger('click');
+      }
+      // Escape to cancel
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        $modal.find('.ai-modal-cancel').trigger('click');
       }
     });
   }

@@ -97,6 +97,40 @@ class AIResponseGeneratorPlugin extends Plugin {
     }
 
     /**
+     * Gets toolbar button data for JavaScript injection
+     *
+     * @param object $object Viewed object (e.g., Ticket)
+     * @return array Array of button configuration data for each instance
+     */
+    private function getToolbarButtonData($object) {
+        // Verify this is a ticket
+        if (!$object || !method_exists($object, 'getId')) return array();
+
+        $ticket_id = (int)$object->getId();
+        if (!$ticket_id) return array();
+
+        // Get all enabled instance configs
+        $configs = self::getAllConfigs();
+        if (!$configs) return array();
+
+        $buttons = array();
+        foreach ($configs as $iid => $cfg) {
+            $inst = $cfg->getInstance();
+            $name = $inst ? $inst->getName() : ('Instance '.$iid);
+            $showPopup = (bool)$cfg->get('show_instructions_popup');
+
+            $buttons[] = array(
+                'ticketId' => $ticket_id,
+                'instanceId' => (int)$iid,
+                'showPopup' => $showPopup ? '1' : '0',
+                'title' => sprintf(__('AI Response — %s'), $name)
+            );
+        }
+
+        return $buttons;
+    }
+
+    /**
      * Signal handler: Includes JS/CSS assets on ticket view pages
      *
      * @param object $object Viewed object (e.g., Ticket)
@@ -113,11 +147,66 @@ class AIResponseGeneratorPlugin extends Plugin {
     $css = $base . 'assets/css/style.css?v=' . urlencode(GIT_VERSION);
     echo sprintf('<link rel="stylesheet" type="text/css" href="%s"/>', $css);
     echo sprintf('<script type="text/javascript" src="%s"></script>', $js);
-    // Inline bootstrap for route
+
+    // Inline bootstrap for route and toolbar button injection
     ?>
     <script type="text/javascript">
     window.AIResponseGen = window.AIResponseGen || {};
     window.AIResponseGen.ajaxEndpoint = 'ajax.php/ai/response';
+
+    // Inject prominent toolbar button for each enabled instance
+    window.AIResponseGen.toolbarInstances = window.AIResponseGen.toolbarInstances || <?php echo json_encode($this->getToolbarButtonData($object)); ?>;
+
+    (function() {
+        function injectToolbarButtons() {
+            // Find the toolbar
+            var $toolbar = $('.sticky.bar .pull-right.flush-right');
+            if (!$toolbar.length) return;
+
+            // Get instances data
+            var instances = window.AIResponseGen.toolbarInstances || [];
+            if (!instances.length) return;
+
+            // Create buttons for each instance
+            instances.forEach(function(inst) {
+                // Check if button already exists
+                var btnId = 'ai-response-toolbar-btn-' + inst.instanceId;
+                if ($('#' + btnId).length) return;
+
+                // Create the button HTML
+                var $btn = $('<a/>', {
+                    id: btnId,
+                    class: 'action-button pull-right ai-generate-reply',
+                    href: '#ai/generate',
+                    'data-ticket-id': inst.ticketId,
+                    'data-instance-id': inst.instanceId,
+                    'data-show-popup': inst.showPopup,
+                    'data-placement': 'bottom',
+                    'data-toggle': 'tooltip',
+                    title: inst.title
+                }).append($('<i/>', {
+                    class: 'icon-magic'
+                }));
+
+                // Insert before the More dropdown (first element in toolbar)
+                $toolbar.prepend($btn);
+
+                // Initialize tooltip if available
+                if (typeof $btn.tooltip === 'function') {
+                    $btn.tooltip();
+                }
+            });
+        }
+
+        // Try to inject immediately
+        $(document).ready(injectToolbarButtons);
+
+        // Also try after a short delay (for dynamic content)
+        setTimeout(injectToolbarButtons, 500);
+
+        // Watch for pjax page loads (osTicket uses pjax for navigation)
+        $(document).on('pjax:end', injectToolbarButtons);
+    })();
     </script>
     <?php
     }

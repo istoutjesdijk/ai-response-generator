@@ -293,6 +293,11 @@
             line = line.trim();
             if (!line) return;
 
+            // Skip SSE comments (used to prevent buffering)
+            if (line.indexOf(':') === 0) {
+              return;
+            }
+
             // Parse SSE format: "event: chunk" or "data: {...}"
             if (line.indexOf('event:') === 0) {
               // Store event type for next data line

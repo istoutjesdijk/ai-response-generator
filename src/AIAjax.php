@@ -118,22 +118,48 @@ class AIAjaxController extends AjaxController {
         header('Connection: keep-alive');
         header('X-Accel-Buffering: no'); // Disable nginx buffering
 
-        // Disable output buffering
-        while (ob_get_level()) ob_end_clean();
+        // Disable Apache output compression
+        if (function_exists('apache_setenv')) {
+            apache_setenv('no-gzip', '1');
+        }
+
+        // Disable all output buffering at PHP level
+        @ini_set('output_buffering', 'off');
+        @ini_set('zlib.output_compression', 'off');
+        @ini_set('implicit_flush', '1');
+
+        // Turn off output buffering
+        while (ob_get_level()) {
+            ob_end_clean();
+        }
+
+        // Start unbuffered output
+        if (function_exists('ob_implicit_flush')) {
+            ob_implicit_flush(true);
+        }
 
         // Helper to send SSE event
         $sendEvent = function($event, $data) {
             echo "event: {$event}\n";
             echo "data: " . json_encode($data) . "\n\n";
-            // Ensure immediate output
-            if (ob_get_level()) ob_flush();
-            flush();
-            // Force flush for some servers
-            if (function_exists('fastcgi_finish_request')) {
-                // Don't use this - it would close the connection
-                // fastcgi_finish_request();
+
+            // Aggressive flushing to prevent buffering
+            if (ob_get_level()) {
+                @ob_flush();
+            }
+            @flush();
+
+            // Extra flush for FastCGI
+            if (function_exists('fastcgi_finish_request') && $event === 'done') {
+                // Only use on final event to ensure all data is sent
+                @fastcgi_finish_request();
             }
         };
+
+        // Send initial comment to establish connection and prevent buffering
+        echo ": connected\n\n";
+        if (ob_get_level()) @ob_flush();
+        @flush();
 
         try {
             $client = new OpenAIClient($api_url, $api_key);

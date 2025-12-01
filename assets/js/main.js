@@ -5,7 +5,10 @@
   window.AIResponseGen.inflight = window.AIResponseGen.inflight || {};
   function setReplyText(text, append) {
     var $ta = $('#response');
-    if (!$ta.length) return false;
+    if (!$ta.length) {
+      console.warn('AI Response: #response textarea not found');
+      return false;
+    }
 
     // Ensure the Post Reply tab is active so editor is initialized
     var $postBtn = $('a.post-response.action-button').first();
@@ -19,26 +22,35 @@
         if (append) {
           // Append mode: add to existing content
           var current = $ta.redactor('source.getCode') || '';
-          $ta.redactor('source.setCode', current + text);
+          var newContent = current + text;
+          $ta.redactor('source.setCode', newContent);
+          console.log('AI Response: Redactor append, new length:', newContent.length);
         } else {
           // Replace mode: add with spacing
           var current = $ta.redactor('source.getCode') || '';
           var newText = current ? (current + "\n\n" + text) : text;
           $ta.redactor('source.setCode', newText);
+          console.log('AI Response: Redactor replace, new length:', newText.length);
         }
         return true;
       }
-    } catch (e) { }
+    } catch (e) {
+      console.error('AI Response: Redactor error:', e);
+    }
 
     // Fallback to plain textarea
     if (append) {
       // Append mode: add to existing content
       var current = $ta.val() || '';
-      $ta.val(current + text).trigger('change');
+      var newContent = current + text;
+      $ta.val(newContent).trigger('change');
+      console.log('AI Response: Textarea append, new length:', newContent.length);
     } else {
       // Replace mode: add with spacing
       var current = $ta.val() || '';
-      $ta.val(current ? (current + "\n\n" + text) : text).trigger('change');
+      var newText = current ? (current + "\n\n" + text) : text;
+      $ta.val(newText).trigger('change');
+      console.log('AI Response: Textarea replace, new length:', newText.length);
     }
     return true;
   }

@@ -181,6 +181,8 @@
     // Buffer to accumulate all chunks (workaround for Redactor issues)
     var streamBuffer = '';
     var initialContent = ''; // Store initial content with spacing
+    var lastUpdateTime = 0;
+    var updateThrottleMs = 50; // Update UI max once per 50ms for smoother rendering
 
     // Prepare request data
     var requestData = { ticket_id: tid, instance_id: iid };
@@ -282,7 +284,7 @@
 
                 // Handle different event types
                 if (currentEvent === 'chunk' && data.text) {
-                  console.log('AI Response: Received chunk:', data.text.substring(0, 50) + '...');
+                  console.log('AI Response: Received chunk at', Date.now(), ':', data.text.substring(0, 50) + '...');
 
                   // Add to buffer
                   streamBuffer += data.text;
@@ -304,31 +306,51 @@
                     startedWriting = true;
                   }
 
-                  // Replace entire content with initial + buffer (more reliable)
-                  var fullContent = initialContent + streamBuffer;
-                  var $ta = $('#response');
-                  if ($ta.length) {
-                    try {
-                      if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
-                        $ta.redactor('source.setCode', fullContent);
-                      } else {
-                        $ta.val(fullContent).trigger('change');
+                  // Throttle UI updates for smoother rendering
+                  var now = Date.now();
+                  if (now - lastUpdateTime >= updateThrottleMs) {
+                    lastUpdateTime = now;
+
+                    // Replace entire content with initial + buffer (more reliable)
+                    var fullContent = initialContent + streamBuffer;
+                    var $ta = $('#response');
+                    if ($ta.length) {
+                      try {
+                        if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
+                          $ta.redactor('source.setCode', fullContent);
+                        } else {
+                          $ta.val(fullContent).trigger('change');
+                        }
+                        console.log('AI Response: UI updated, total length:', fullContent.length);
+                      } catch (e) {
+                        console.error('AI Response: Update failed:', e);
                       }
-                      console.log('AI Response: Buffer updated, total length:', fullContent.length);
-                    } catch (e) {
-                      console.error('AI Response: Update failed:', e);
                     }
                   }
                 } else if (currentEvent === 'done') {
-                  console.log('AI Response: Stream completed');
-                  // Done event - streaming is complete
-                  // If template was applied, the done event contains the final formatted text
-                  // Only use it if we haven't started writing (no chunks received)
-                  if (!startedWriting && data.text) {
+                  console.log('AI Response: Stream completed at', Date.now());
+
+                  // Final update with complete content
+                  if (startedWriting) {
+                    var fullContent = initialContent + streamBuffer;
+                    var $ta = $('#response');
+                    if ($ta.length) {
+                      try {
+                        if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
+                          $ta.redactor('source.setCode', fullContent);
+                        } else {
+                          $ta.val(fullContent).trigger('change');
+                        }
+                        console.log('AI Response: Final update, total length:', fullContent.length);
+                      } catch (e) {}
+                    }
+                  } else if (data.text) {
+                    // Fallback if no chunks received
                     setReplyText(data.text, false);
                   }
                 } else if (currentEvent === 'error' && data.message) {
                   // Error event
+                  console.error('AI Response: Error at', Date.now(), ':', data.message);
                   showToast(data.message, 'error');
                   setLoading($a, false);
                   $a.data('aiBusy', false);

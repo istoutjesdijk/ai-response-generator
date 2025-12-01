@@ -22,7 +22,7 @@ class OpenAIClient {
     }
 
     /**
-     * Generates AI response using OpenAI or Anthropic API
+     * Generates AI response using OpenAI or Anthropic API with streaming support
      *
      * @param string $model Model name to use (e.g., 'gpt-4', 'claude-3-opus')
      * @param array $messages Array of message objects with 'role' and 'content' keys
@@ -32,10 +32,11 @@ class OpenAIClient {
      * @param int|null $timeout Request timeout in seconds
      * @param string $provider Provider type: 'openai', 'anthropic', or 'auto' for auto-detection
      * @param string|null $anthropicVersion Anthropic API version header value
-     * @return string Generated response text
+     * @param callable|null $streamCallback Callback function for streaming chunks: function($chunk)
+     * @return string Generated response text (full text when not streaming, empty when streaming)
      * @throws Exception On API errors or network failures
      */
-    function generateResponse($model, array $messages, $temperature = null, $max_tokens = null, $max_tokens_param = null, $timeout = null, $provider = 'auto', $anthropicVersion = null) {
+    function generateResponse($model, array $messages, $temperature = null, $max_tokens = null, $max_tokens_param = null, $timeout = null, $provider = 'auto', $anthropicVersion = null, $streamCallback = null) {
         // Apply defaults
         $temperature = $temperature ?? AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
         $max_tokens = $max_tokens ?? AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
@@ -92,6 +93,9 @@ class OpenAIClient {
                 'max_tokens' => (int)$max_tokens,
             );
             if ($system !== '') $payload['system'] = $system;
+            // Enable streaming if callback provided
+            $isStreaming = is_callable($streamCallback);
+            if ($isStreaming) $payload['stream'] = true;
 
             $headers = array('Content-Type: application/json');
             if ($this->apiKey)
@@ -102,9 +106,42 @@ class OpenAIClient {
             $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, !$isStreaming); // Disable when streaming
             curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
             curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+
+            // Handle streaming with callback
+            if ($isStreaming) {
+                $buffer = '';
+                curl_setopt($ch, CURLOPT_WRITEFUNCTION, function($ch, $data) use (&$buffer, $streamCallback) {
+                    $buffer .= $data;
+                    $lines = explode("\n", $buffer);
+                    // Keep last incomplete line in buffer
+                    $buffer = array_pop($lines);
+
+                    foreach ($lines as $line) {
+                        $line = trim($line);
+                        if (empty($line) || $line === 'event: message_start' || $line === 'event: content_block_start' ||
+                            $line === 'event: content_block_stop' || $line === 'event: message_stop' || $line === 'event: ping') {
+                            continue;
+                        }
+
+                        // Parse SSE data: lines
+                        if (strpos($line, 'data: ') === 0) {
+                            $json_str = substr($line, 6); // Remove 'data: ' prefix
+                            if ($json_str === '[DONE]') continue;
+
+                            $chunk = JsonDataParser::decode($json_str, true);
+                            // Anthropic streaming format: {"type":"content_block_delta","delta":{"type":"text","text":"..."}}
+                            if (isset($chunk['type']) && $chunk['type'] === 'content_block_delta' &&
+                                isset($chunk['delta']['text'])) {
+                                call_user_func($streamCallback, $chunk['delta']['text']);
+                            }
+                        }
+                    }
+                    return strlen($data);
+                });
+            }
 
             $resp = curl_exec($ch);
             if ($resp === false) {
@@ -114,6 +151,13 @@ class OpenAIClient {
             }
             $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
+
+            // When streaming, response is already sent via callback
+            if ($isStreaming) {
+                if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD)
+                    throw new Exception('API error: HTTP ' . $code);
+                return '';
+            }
 
             $json = JsonDataParser::decode($resp, true);
             if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD)
@@ -152,6 +196,9 @@ class OpenAIClient {
         );
         // Add the correct parameter name for max tokens
         $payload[$max_tokens_param ?: 'max_tokens'] = $max_tokens;
+        // Enable streaming if callback provided
+        $isStreaming = is_callable($streamCallback);
+        if ($isStreaming) $payload['stream'] = true;
 
         $headers = array('Content-Type: application/json');
         if ($this->apiKey)
@@ -160,9 +207,38 @@ class OpenAIClient {
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, !$isStreaming); // Disable when streaming
         curl_setopt($ch, CURLOPT_TIMEOUT, $timeout); // configurable timeout
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+
+        // Handle streaming with callback
+        if ($isStreaming) {
+            $buffer = '';
+            curl_setopt($ch, CURLOPT_WRITEFUNCTION, function($ch, $data) use (&$buffer, $streamCallback) {
+                $buffer .= $data;
+                $lines = explode("\n", $buffer);
+                // Keep last incomplete line in buffer
+                $buffer = array_pop($lines);
+
+                foreach ($lines as $line) {
+                    $line = trim($line);
+                    if (empty($line)) continue;
+
+                    // Parse SSE data: lines
+                    if (strpos($line, 'data: ') === 0) {
+                        $json_str = substr($line, 6); // Remove 'data: ' prefix
+                        if ($json_str === '[DONE]') continue;
+
+                        $chunk = JsonDataParser::decode($json_str, true);
+                        // OpenAI streaming format: {"choices":[{"delta":{"content":"..."}}]}
+                        if (isset($chunk['choices'][0]['delta']['content'])) {
+                            call_user_func($streamCallback, $chunk['choices'][0]['delta']['content']);
+                        }
+                    }
+                }
+                return strlen($data);
+            });
+        }
 
         $resp = curl_exec($ch);
         if ($resp === false) {
@@ -172,6 +248,13 @@ class OpenAIClient {
         }
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+
+        // When streaming, response is already sent via callback
+        if ($isStreaming) {
+            if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD)
+                throw new Exception('API error: HTTP ' . $code);
+            return '';
+        }
 
         $json = JsonDataParser::decode($resp, true);
         if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD)

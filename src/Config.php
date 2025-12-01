@@ -133,6 +133,14 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             )
         ));
 
+        $fields['enable_streaming'] = new BooleanField(array(
+            'label' => __('Enable Streaming Responses'),
+            'default' => false,
+            'configuration' => array(
+                'desc' => __('When enabled, AI responses stream in real-time (typewriter effect) instead of appearing all at once. Works with both OpenAI and Anthropic.')
+            )
+        ));
+
         return $fields;
     }
 }

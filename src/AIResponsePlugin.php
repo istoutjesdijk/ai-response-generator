@@ -82,12 +82,14 @@ class AIResponseGeneratorPlugin extends Plugin {
                         $name = $inst ? $inst->getName() : ('Instance '.$iid);
                         // BooleanField returns true/false or 1/0
                         $showPopup = (bool)$cfg->get('show_instructions_popup');
+                        $enableStreaming = (bool)$cfg->get('enable_streaming');
                         ?>
                         <li>
                             <a class="ai-generate-reply" href="#ai/generate"
                                  data-ticket-id="<?php echo (int)$ticket->getId(); ?>"
                                  data-instance-id="<?php echo (int)$iid; ?>"
-                                 data-show-popup="<?php echo $showPopup ? '1' : '0'; ?>">
+                                 data-show-popup="<?php echo $showPopup ? '1' : '0'; ?>"
+                                 data-enable-streaming="<?php echo $enableStreaming ? '1' : '0'; ?>">
                                 <i class="icon-magic"></i>
                                 <?php echo __('AI Response'); ?> — <?php echo Format::htmlchars($name); ?>
                             </a>
@@ -118,11 +120,13 @@ class AIResponseGeneratorPlugin extends Plugin {
             $inst = $cfg->getInstance();
             $name = $inst ? $inst->getName() : ('Instance '.$iid);
             $showPopup = (bool)$cfg->get('show_instructions_popup');
+            $enableStreaming = (bool)$cfg->get('enable_streaming');
 
             $buttons[] = array(
                 'ticketId' => $ticket_id,
                 'instanceId' => (int)$iid,
                 'showPopup' => $showPopup ? '1' : '0',
+                'enableStreaming' => $enableStreaming ? '1' : '0',
                 'title' => sprintf(__('AI Response — %s'), $name)
             );
         }
@@ -181,6 +185,7 @@ class AIResponseGeneratorPlugin extends Plugin {
                     'data-ticket-id': inst.ticketId,
                     'data-instance-id': inst.instanceId,
                     'data-show-popup': inst.showPopup,
+                    'data-enable-streaming': inst.enableStreaming,
                     'data-placement': 'bottom',
                     'data-toggle': 'tooltip',
                     title: inst.title
@@ -219,5 +224,6 @@ class AIResponseGeneratorPlugin extends Plugin {
     function onAjaxScp($dispatcher) {
         require_once(__DIR__ . '/AIAjax.php');
         $dispatcher->append(url_post('^/ai/response$', array('AIAjaxController', 'generate')));
+        $dispatcher->append(url_post('^/ai/response/stream$', array('AIAjaxController', 'generateStreaming')));
     }
 }

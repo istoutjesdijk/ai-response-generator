@@ -3,7 +3,7 @@
   window.AIResponseGen = window.AIResponseGen || {};
   // Track in-flight requests per ticket/instance to dedupe network calls
   window.AIResponseGen.inflight = window.AIResponseGen.inflight || {};
-  function setReplyText(text) {
+  function setReplyText(text, append) {
     var $ta = $('#response');
     if (!$ta.length) return false;
 
@@ -16,16 +16,30 @@
     // Prefer Redactor source.setCode when richtext is enabled
     try {
       if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
-        var current = $ta.redactor('source.getCode') || '';
-        var newText = current ? (current + "\n\n" + text) : text;
-        $ta.redactor('source.setCode', newText);
+        if (append) {
+          // Append mode: add to existing content
+          var current = $ta.redactor('source.getCode') || '';
+          $ta.redactor('source.setCode', current + text);
+        } else {
+          // Replace mode: add with spacing
+          var current = $ta.redactor('source.getCode') || '';
+          var newText = current ? (current + "\n\n" + text) : text;
+          $ta.redactor('source.setCode', newText);
+        }
         return true;
       }
     } catch (e) { }
 
-    // Fallback to plain textarea append
-    var current = $ta.val() || '';
-    $ta.val(current ? (current + "\n\n" + text) : text).trigger('change');
+    // Fallback to plain textarea
+    if (append) {
+      // Append mode: add to existing content
+      var current = $ta.val() || '';
+      $ta.val(current + text).trigger('change');
+    } else {
+      // Replace mode: add with spacing
+      var current = $ta.val() || '';
+      $ta.val(current ? (current + "\n\n" + text) : text).trigger('change');
+    }
     return true;
   }
 
@@ -137,6 +151,122 @@
     });
   }
 
+  function generateAIResponseStreaming($a, tid, iid, extraInstructions) {
+    var key = tid + ':' + iid;
+    setLoading($a, true);
+
+    // Prepare request data
+    var requestData = { ticket_id: tid, instance_id: iid };
+    if (extraInstructions) {
+      requestData.extra_instructions = extraInstructions;
+    }
+
+    // Convert to URLSearchParams for fetch
+    var formData = new URLSearchParams();
+    for (var k in requestData) {
+      formData.append(k, requestData[k]);
+    }
+
+    // Use fetch with streaming
+    var streamUrl = 'ajax.php/ai/response/stream';
+
+    // Ensure reply box is ready before streaming
+    if (!setReplyText('', false)) {
+      showToast('Reply box not found.', 'error');
+      setLoading($a, false);
+      $a.data('aiBusy', false);
+      return false;
+    }
+
+    // Track if we've started writing (to add spacing)
+    var startedWriting = false;
+
+    fetch(streamUrl, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Accept': 'text/event-stream'
+      }
+    }).then(function(response) {
+      if (!response.ok) {
+        throw new Error('HTTP ' + response.status);
+      }
+
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+
+      // Mark as in-flight
+      window.AIResponseGen.inflight[key] = { abort: function() { reader.cancel(); } };
+
+      function processStream() {
+        return reader.read().then(function(result) {
+          if (result.done) {
+            setLoading($a, false);
+            $a.data('aiBusy', false);
+            delete window.AIResponseGen.inflight[key];
+            return;
+          }
+
+          buffer += decoder.decode(result.value, { stream: true });
+          var lines = buffer.split('\n');
+          buffer = lines.pop(); // Keep incomplete line in buffer
+
+          lines.forEach(function(line) {
+            line = line.trim();
+            if (!line) return;
+
+            // Parse SSE format: "event: chunk" or "data: {...}"
+            if (line.indexOf('event:') === 0) {
+              // Event type line, skip
+              return;
+            }
+
+            if (line.indexOf('data:') === 0) {
+              var jsonStr = line.substring(5).trim();
+              try {
+                var data = JSON.parse(jsonStr);
+
+                if (data.text) {
+                  // Add spacing before first chunk
+                  if (!startedWriting) {
+                    setReplyText('', false); // This adds proper spacing
+                    startedWriting = true;
+                  }
+                  // Append chunk
+                  setReplyText(data.text, true);
+                }
+
+                if (data.message) {
+                  // Error event
+                  showToast(data.message, 'error');
+                  setLoading($a, false);
+                  $a.data('aiBusy', false);
+                  delete window.AIResponseGen.inflight[key];
+                  reader.cancel();
+                }
+              } catch (e) {
+                console.error('Failed to parse SSE data:', e);
+              }
+            }
+          });
+
+          return processStream();
+        });
+      }
+
+      return processStream();
+
+    }).catch(function(error) {
+      showToast('Streaming failed: ' + error.message, 'error');
+      setLoading($a, false);
+      $a.data('aiBusy', false);
+      delete window.AIResponseGen.inflight[key];
+    });
+
+    return false;
+  }
+
   function generateAIResponse($a, tid, iid, extraInstructions) {
     var key = tid + ':' + iid;
 
@@ -159,7 +289,7 @@
 
     jq.done(function (resp) {
       if (resp && resp.ok) {
-        if (!setReplyText(resp.text || '')) {
+        if (!setReplyText(resp.text || '', false)) {
           showToast('AI response generated, but reply box not found.', 'error');
         }
       } else {
@@ -191,6 +321,7 @@
     if (!tid) return false;
     var iid = ($a.data('instance-id') || '').toString();
     var showPopup = $a.data('show-popup') !== '0' && $a.data('show-popup') !== 0;
+    var enableStreaming = $a.data('enable-streaming') === '1' || $a.data('enable-streaming') === 1;
     var key = tid + ':' + iid;
 
     // Re-entrancy guard (covers accidental double fires from duplicate bindings or rapid clicks)
@@ -198,6 +329,9 @@
     // In-flight dedupe across handlers/elements for the same ticket/instance
     if (window.AIResponseGen.inflight[key]) return false;
     $a.data('aiBusy', true);
+
+    // Choose between streaming and non-streaming
+    var generateFunc = enableStreaming ? generateAIResponseStreaming : generateAIResponse;
 
     // Check if popup should be shown
     if (showPopup) {
@@ -210,11 +344,11 @@
         }
 
         // Proceed with generation
-        generateAIResponse($a, tid, iid, extraInstructions);
+        generateFunc($a, tid, iid, extraInstructions);
       });
     } else {
       // Generate directly without popup
-      generateAIResponse($a, tid, iid, '');
+      generateFunc($a, tid, iid, '');
     }
 
     return false;

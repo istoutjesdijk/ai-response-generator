@@ -16,20 +16,31 @@
       try { $postBtn.trigger('click'); } catch (e) { }
     }
 
-    // Prefer Redactor source.setCode when richtext is enabled
+    // Prefer Redactor insert when richtext is enabled
     try {
       if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
         if (append) {
-          // Append mode: add to existing content
-          var current = $ta.redactor('source.getCode') || '';
-          var newContent = current + text;
-          $ta.redactor('source.setCode', newContent);
-          console.log('AI Response: Redactor append, new length:', newContent.length);
+          // Append mode: insert at end
+          // Use insertion.insertHtml to add content at cursor position
+          try {
+            $ta.redactor('insertion.insertHtml', text);
+            console.log('AI Response: Redactor insert (append)');
+          } catch (e) {
+            // Fallback to source.setCode if insertion doesn't work
+            var current = $ta.redactor('source.getCode') || '';
+            var newContent = current + text;
+            $ta.redactor('source.setCode', newContent);
+            console.log('AI Response: Redactor setCode (fallback), new length:', newContent.length);
+          }
         } else {
           // Replace mode: add with spacing
           var current = $ta.redactor('source.getCode') || '';
           var newText = current ? (current + "\n\n" + text) : text;
           $ta.redactor('source.setCode', newText);
+          // Move cursor to end for subsequent appends
+          try {
+            $ta.redactor('selection.setEnd');
+          } catch (e) {}
           console.log('AI Response: Redactor replace, new length:', newText.length);
         }
         return true;

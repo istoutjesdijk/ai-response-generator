@@ -167,8 +167,9 @@
       formData.append(k, requestData[k]);
     }
 
-    // Use fetch with streaming
-    var streamUrl = 'ajax.php/ai/response/stream';
+    // Use fetch with streaming - use same base endpoint as normal requests
+    var baseUrl = (window.AIResponseGen && window.AIResponseGen.ajaxEndpoint) || 'ajax.php/ai/response';
+    var streamUrl = baseUrl.replace(/\/response$/, '/response/stream');
 
     // Ensure reply box is ready before streaming
     if (!setReplyText('', false)) {
@@ -189,7 +190,11 @@
       }
     }).then(function(response) {
       if (!response.ok) {
-        throw new Error('HTTP ' + response.status);
+        // Try to read error response
+        return response.text().then(function(text) {
+          console.error('Streaming request failed:', response.status, text);
+          throw new Error('HTTP ' + response.status + ': ' + (text || 'Unknown error'));
+        });
       }
 
       var reader = response.body.getReader();

@@ -174,15 +174,46 @@
     });
   }
 
+  function showStreamingOverlay() {
+    // Create streaming overlay
+    var overlayHtml =
+      '<div class="ai-streaming-overlay">' +
+        '<div class="ai-streaming-modal">' +
+          '<div class="ai-streaming-header">' +
+            '<h3>AI Response Generating...</h3>' +
+          '</div>' +
+          '<div class="ai-streaming-body">' +
+            '<div class="ai-streaming-content"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    var $overlay = $(overlayHtml);
+    $('body').append($overlay);
+
+    // Return functions to update and close
+    return {
+      update: function(text) {
+        $overlay.find('.ai-streaming-content').text(text);
+        // Auto-scroll to bottom
+        var $content = $overlay.find('.ai-streaming-content');
+        $content.scrollTop($content[0].scrollHeight);
+      },
+      close: function() {
+        $overlay.fadeOut(200, function() {
+          $overlay.remove();
+        });
+      }
+    };
+  }
+
   function generateAIResponseStreaming($a, tid, iid, extraInstructions) {
     var key = tid + ':' + iid;
     setLoading($a, true);
 
-    // Buffer to accumulate all chunks (workaround for Redactor issues)
+    // Buffer to accumulate all chunks
     var streamBuffer = '';
-    var initialContent = ''; // Store initial content with spacing
-    var lastUpdateTime = 0;
-    var updateThrottleMs = 50; // Update UI max once per 50ms for smoother rendering
+    var streamingUI = null;
 
     // Prepare request data
     var requestData = { ticket_id: tid, instance_id: iid };
@@ -218,16 +249,8 @@
 
     console.log('AI Response: Starting streaming request to:', streamUrl);
 
-    // Ensure reply box is ready before streaming
-    if (!setReplyText('', false)) {
-      showToast('Reply box not found.', 'error');
-      setLoading($a, false);
-      $a.data('aiBusy', false);
-      return false;
-    }
-
-    // Track if we've started writing (to add spacing)
-    var startedWriting = false;
+    // Show streaming overlay
+    streamingUI = showStreamingOverlay();
 
     fetch(streamUrl, {
       method: 'POST',
@@ -284,73 +307,43 @@
 
                 // Handle different event types
                 if (currentEvent === 'chunk' && data.text) {
-                  console.log('AI Response: Received chunk at', Date.now(), ':', data.text.substring(0, 50) + '...');
+                  console.log('AI Response: Received chunk:', data.text.substring(0, 50) + '...');
 
                   // Add to buffer
                   streamBuffer += data.text;
 
-                  // On first chunk, get initial content with spacing
-                  if (!startedWriting) {
-                    var $ta = $('#response');
-                    if ($ta.length) {
-                      try {
-                        if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
-                          var current = $ta.redactor('source.getCode') || '';
-                          initialContent = current ? (current + "\n\n") : '';
-                        } else {
-                          var current = $ta.val() || '';
-                          initialContent = current ? (current + "\n\n") : '';
-                        }
-                      } catch (e) {}
-                    }
-                    startedWriting = true;
-                  }
-
-                  // Throttle UI updates for smoother rendering
-                  var now = Date.now();
-                  if (now - lastUpdateTime >= updateThrottleMs) {
-                    lastUpdateTime = now;
-
-                    // Replace entire content with initial + buffer (more reliable)
-                    var fullContent = initialContent + streamBuffer;
-                    var $ta = $('#response');
-                    if ($ta.length) {
-                      try {
-                        if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
-                          $ta.redactor('source.setCode', fullContent);
-                        } else {
-                          $ta.val(fullContent).trigger('change');
-                        }
-                        console.log('AI Response: UI updated, total length:', fullContent.length);
-                      } catch (e) {
-                        console.error('AI Response: Update failed:', e);
-                      }
-                    }
+                  // Update streaming overlay in real-time
+                  if (streamingUI) {
+                    streamingUI.update(streamBuffer);
                   }
                 } else if (currentEvent === 'done') {
-                  console.log('AI Response: Stream completed at', Date.now());
+                  console.log('AI Response: Stream completed, writing to textarea');
 
-                  // Final update with complete content
-                  if (startedWriting) {
-                    var fullContent = initialContent + streamBuffer;
-                    var $ta = $('#response');
-                    if ($ta.length) {
-                      try {
-                        if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
-                          $ta.redactor('source.setCode', fullContent);
-                        } else {
-                          $ta.val(fullContent).trigger('change');
-                        }
-                        console.log('AI Response: Final update, total length:', fullContent.length);
-                      } catch (e) {}
+                  // Close streaming overlay
+                  if (streamingUI) {
+                    streamingUI.close();
+                    streamingUI = null;
+                  }
+
+                  // Write final content to textarea in one go
+                  if (streamBuffer) {
+                    if (!setReplyText(streamBuffer, false)) {
+                      showToast('Failed to write response to textarea', 'error');
                     }
                   } else if (data.text) {
-                    // Fallback if no chunks received
+                    // Fallback: use done event text if no chunks received
                     setReplyText(data.text, false);
                   }
                 } else if (currentEvent === 'error' && data.message) {
                   // Error event
-                  console.error('AI Response: Error at', Date.now(), ':', data.message);
+                  console.error('AI Response: Error:', data.message);
+
+                  // Close streaming overlay
+                  if (streamingUI) {
+                    streamingUI.close();
+                    streamingUI = null;
+                  }
+
                   showToast(data.message, 'error');
                   setLoading($a, false);
                   $a.data('aiBusy', false);
@@ -372,6 +365,12 @@
       return processStream();
 
     }).catch(function(error) {
+      // Close streaming overlay on error
+      if (streamingUI) {
+        streamingUI.close();
+        streamingUI = null;
+      }
+
       showToast('Streaming failed: ' + error.message, 'error');
       setLoading($a, false);
       $a.data('aiBusy', false);

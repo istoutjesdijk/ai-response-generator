@@ -187,6 +187,8 @@
     var baseUrl = (window.AIResponseGen && window.AIResponseGen.ajaxEndpoint) || 'ajax.php/ai/response';
     var streamUrl = baseUrl.replace(/\/response$/, '/response/stream');
 
+    console.log('AI Response: Starting streaming request to:', streamUrl);
+
     // Ensure reply box is ready before streaming
     if (!setReplyText('', false)) {
       showToast('Reply box not found.', 'error');
@@ -234,13 +236,15 @@
           var lines = buffer.split('\n');
           buffer = lines.pop(); // Keep incomplete line in buffer
 
+          var currentEvent = null;
           lines.forEach(function(line) {
             line = line.trim();
             if (!line) return;
 
             // Parse SSE format: "event: chunk" or "data: {...}"
             if (line.indexOf('event:') === 0) {
-              // Event type line, skip
+              // Store event type for next data line
+              currentEvent = line.substring(6).trim();
               return;
             }
 
@@ -249,7 +253,9 @@
               try {
                 var data = JSON.parse(jsonStr);
 
-                if (data.text) {
+                // Handle different event types
+                if (currentEvent === 'chunk' && data.text) {
+                  console.log('AI Response: Received chunk:', data.text.substring(0, 50) + '...');
                   // Add spacing before first chunk
                   if (!startedWriting) {
                     setReplyText('', false); // This adds proper spacing
@@ -257,9 +263,15 @@
                   }
                   // Append chunk
                   setReplyText(data.text, true);
-                }
-
-                if (data.message) {
+                } else if (currentEvent === 'done') {
+                  console.log('AI Response: Stream completed');
+                  // Done event - streaming is complete
+                  // If template was applied, the done event contains the final formatted text
+                  // Only use it if we haven't started writing (no chunks received)
+                  if (!startedWriting && data.text) {
+                    setReplyText(data.text, false);
+                  }
+                } else if (currentEvent === 'error' && data.message) {
                   // Error event
                   showToast(data.message, 'error');
                   setLoading($a, false);
@@ -267,6 +279,8 @@
                   delete window.AIResponseGen.inflight[key];
                   reader.cancel();
                 }
+
+                currentEvent = null; // Reset after processing
               } catch (e) {
                 console.error('Failed to parse SSE data:', e);
               }
@@ -354,6 +368,9 @@
 
     // Choose between streaming and non-streaming
     var generateFunc = enableStreaming ? generateAIResponseStreaming : generateAIResponse;
+
+    // Debug: log which function is being used
+    console.log('AI Response: Using ' + (enableStreaming ? 'STREAMING' : 'NON-STREAMING') + ' mode');
 
     // Check if popup should be shown
     if (showPopup) {

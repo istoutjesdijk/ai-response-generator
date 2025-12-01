@@ -125,8 +125,14 @@ class AIAjaxController extends AjaxController {
         $sendEvent = function($event, $data) {
             echo "event: {$event}\n";
             echo "data: " . json_encode($data) . "\n\n";
+            // Ensure immediate output
             if (ob_get_level()) ob_flush();
             flush();
+            // Force flush for some servers
+            if (function_exists('fastcgi_finish_request')) {
+                // Don't use this - it would close the connection
+                // fastcgi_finish_request();
+            }
         };
 
         try {

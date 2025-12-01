@@ -161,6 +161,22 @@
       requestData.extra_instructions = extraInstructions;
     }
 
+    // Get CSRF token (osTicket uses __CSRFToken__ field)
+    // Try multiple common locations
+    var csrfToken = $('input[name="__CSRFToken__"]').val() ||
+                    $('meta[name="csrf_token"]').attr('content') ||
+                    '';
+
+    // Debug: log if CSRF token was found
+    if (!csrfToken) {
+      console.warn('AI Response: CSRF token not found, request may fail');
+    }
+
+    // Add CSRF token to request data if found
+    if (csrfToken) {
+      requestData.__CSRFToken__ = csrfToken;
+    }
+
     // Convert to URLSearchParams for fetch
     var formData = new URLSearchParams();
     for (var k in requestData) {
@@ -185,6 +201,7 @@
     fetch(streamUrl, {
       method: 'POST',
       body: formData,
+      credentials: 'same-origin', // Include cookies for session/CSRF
       headers: {
         'Accept': 'text/event-stream'
       }

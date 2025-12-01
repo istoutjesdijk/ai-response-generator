@@ -178,6 +178,10 @@
     var key = tid + ':' + iid;
     setLoading($a, true);
 
+    // Buffer to accumulate all chunks (workaround for Redactor issues)
+    var streamBuffer = '';
+    var initialContent = ''; // Store initial content with spacing
+
     // Prepare request data
     var requestData = { ticket_id: tid, instance_id: iid };
     if (extraInstructions) {
@@ -279,13 +283,42 @@
                 // Handle different event types
                 if (currentEvent === 'chunk' && data.text) {
                   console.log('AI Response: Received chunk:', data.text.substring(0, 50) + '...');
-                  // Add spacing before first chunk
+
+                  // Add to buffer
+                  streamBuffer += data.text;
+
+                  // On first chunk, get initial content with spacing
                   if (!startedWriting) {
-                    setReplyText('', false); // This adds proper spacing
+                    var $ta = $('#response');
+                    if ($ta.length) {
+                      try {
+                        if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
+                          var current = $ta.redactor('source.getCode') || '';
+                          initialContent = current ? (current + "\n\n") : '';
+                        } else {
+                          var current = $ta.val() || '';
+                          initialContent = current ? (current + "\n\n") : '';
+                        }
+                      } catch (e) {}
+                    }
                     startedWriting = true;
                   }
-                  // Append chunk
-                  setReplyText(data.text, true);
+
+                  // Replace entire content with initial + buffer (more reliable)
+                  var fullContent = initialContent + streamBuffer;
+                  var $ta = $('#response');
+                  if ($ta.length) {
+                    try {
+                      if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
+                        $ta.redactor('source.setCode', fullContent);
+                      } else {
+                        $ta.val(fullContent).trigger('change');
+                      }
+                      console.log('AI Response: Buffer updated, total length:', fullContent.length);
+                    } catch (e) {
+                      console.error('AI Response: Update failed:', e);
+                    }
+                  }
                 } else if (currentEvent === 'done') {
                   console.log('AI Response: Stream completed');
                   // Done event - streaming is complete

@@ -12,6 +12,160 @@ require_once(__DIR__ . '/Constants.php');
 class AIAjaxController extends AjaxController {
 
     /**
+     * Generates AI response with streaming for a ticket
+     *
+     * @return void Streams SSE events directly to the client
+     */
+    function generateStreaming() {
+        global $thisstaff;
+        $this->staffOnly();
+
+        $ticket_id = (int) ($_POST['ticket_id'] ?? $_GET['ticket_id'] ?? 0);
+        if (!$ticket_id || !($ticket = Ticket::lookup($ticket_id)))
+            Http::response(404, $this->encode(array('ok' => false, 'error' => __('Unknown ticket'))));
+
+        // Permission check: must be able to reply
+        $role = $ticket->getRole($thisstaff);
+        if (!$role || !$role->hasPerm(Ticket::PERM_REPLY))
+            Http::response(403, $this->encode(array('ok' => false, 'error' => __('Access denied'))));
+
+        // Load plugin config
+        $cfg = null;
+        $iid = (int)($_POST['instance_id'] ?? $_GET['instance_id'] ?? 0);
+        if ($iid) {
+            $all = AIResponseGeneratorPlugin::getAllConfigs();
+            if (isset($all[$iid]))
+                $cfg = $all[$iid];
+        }
+        if (!$cfg)
+            $cfg = AIResponseGeneratorPlugin::getActiveConfig();
+        if (!$cfg)
+            Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
+
+        // Build configuration parameters and validate BEFORE setting SSE headers
+        $api_url = rtrim($cfg->get('api_url'), '/');
+        $api_key = $cfg->get('api_key');
+        $model   = $cfg->get('model');
+        $max_tokens_param = trim((string)$cfg->get('max_tokens_param')) ?: 'max_tokens';
+
+        $temperature = $cfg->get('temperature');
+        if ($temperature === null || $temperature === '' || !is_numeric($temperature)) {
+            $temperature = AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
+        } else {
+            $temperature = floatval($temperature);
+        }
+
+        $max_tokens = $cfg->get('max_tokens');
+        if ($max_tokens === null || $max_tokens === '' || !is_numeric($max_tokens) || $max_tokens < 1) {
+            $max_tokens = AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
+        } else {
+            $max_tokens = intval($max_tokens);
+        }
+
+        $timeout = $cfg->get('timeout');
+        if ($timeout === null || $timeout === '' || !is_numeric($timeout) || $timeout < 1) {
+            $timeout = AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
+        } else {
+            $timeout = intval($timeout);
+        }
+
+        if (!$api_url || !$model)
+            Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
+
+        $max_thread_entries = $cfg->get('max_thread_entries');
+        if ($max_thread_entries === null || $max_thread_entries === '' || !is_numeric($max_thread_entries) || $max_thread_entries < 1) {
+            $max_thread_entries = AIResponseGeneratorConstants::MAX_THREAD_ENTRIES;
+        } else {
+            $max_thread_entries = intval($max_thread_entries);
+        }
+
+        // Build messages array (same as generate method)
+        $messages = array();
+        $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
+        $messages[] = array('role' => 'system', 'content' => $system);
+
+        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
+        if ($extra_instructions) {
+            $messages[] = array('role' => 'user', 'content' => "Special instructions for this response: " . $extra_instructions);
+        }
+
+        $thread = $ticket->getThread();
+        $entries = $thread ? $thread->getEntries() : array();
+        $count = 0;
+
+        foreach ($entries as $E) {
+            if ($count++ >= $max_thread_entries) break;
+            $type = $E->getType();
+            $body = ThreadEntryBody::clean($E->getBody());
+            $who  = $E->getPoster();
+            $who  = is_object($who) ? $who->getName() : 'User';
+            $role = ($type == 'M') ? 'user' : 'assistant';
+            $messages[] = array('role' => $role, 'content' => sprintf('[%s] %s', $who, $body));
+        }
+
+        $rag_text = $this->loadRagDocuments($cfg);
+        if ($rag_text)
+            $messages[] = array('role' => 'system', 'content' => "Additional knowledge base context:\n".$rag_text);
+
+        // Validation
+        if (stripos($model, 'gpt-5-nano') !== false && $temperature != 1) {
+            Http::response(400, $this->encode(array('ok' => false, 'error' => __('This model only supports temperature=1.'))));
+        }
+
+        // All validations passed - NOW set SSE headers
+        header('Content-Type: text/event-stream');
+        header('Cache-Control: no-cache');
+        header('Connection: keep-alive');
+        header('X-Accel-Buffering: no'); // Disable nginx buffering
+
+        // Disable output buffering
+        while (ob_get_level()) ob_end_clean();
+
+        // Helper to send SSE event
+        $sendEvent = function($event, $data) {
+            echo "event: {$event}\n";
+            echo "data: " . json_encode($data) . "\n\n";
+            // Ensure immediate output
+            if (ob_get_level()) ob_flush();
+            flush();
+            // Force flush for some servers
+            if (function_exists('fastcgi_finish_request')) {
+                // Don't use this - it would close the connection
+                // fastcgi_finish_request();
+            }
+        };
+
+        try {
+            $client = new OpenAIClient($api_url, $api_key);
+            $provider = 'auto';
+            $anthVersion = trim((string)$cfg->get('anthropic_version')) ?: AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION;
+
+            // Collect full response for template expansion
+            $fullResponse = '';
+
+            // Stream response with callback
+            $client->generateResponse($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $provider, $anthVersion, function($chunk) use ($sendEvent, &$fullResponse) {
+                $fullResponse .= $chunk;
+                $sendEvent('chunk', array('text' => $chunk));
+            });
+
+            // Apply response template if provided
+            $tpl = trim((string)$cfg->get('response_template'));
+            if ($tpl) {
+                global $thisstaff;
+                $tpl = $this->expandTemplate($tpl, $ticket, $fullResponse, $thisstaff);
+                $fullResponse = $tpl;
+            }
+
+            // Send final event with complete response
+            $sendEvent('done', array('text' => $fullResponse));
+
+        } catch (Throwable $t) {
+            $sendEvent('error', array('message' => $t->getMessage()));
+        }
+    }
+
+    /**
      * Generates AI response for a ticket
      *
      * @return string JSON encoded response

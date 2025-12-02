@@ -3,9 +3,12 @@
   window.AIResponseGen = window.AIResponseGen || {};
   // Track in-flight requests per ticket/instance to dedupe network calls
   window.AIResponseGen.inflight = window.AIResponseGen.inflight || {};
-  function setReplyText(text) {
+  function setReplyText(text, append) {
     var $ta = $('#response');
-    if (!$ta.length) return false;
+    if (!$ta.length) {
+      console.warn('AI Response: #response textarea not found');
+      return false;
+    }
 
     // Ensure the Post Reply tab is active so editor is initialized
     var $postBtn = $('a.post-response.action-button').first();
@@ -13,19 +16,53 @@
       try { $postBtn.trigger('click'); } catch (e) { }
     }
 
-    // Prefer Redactor source.setCode when richtext is enabled
+    // Prefer Redactor insert when richtext is enabled
     try {
       if (typeof $ta.redactor === 'function' && $ta.hasClass('richtext')) {
-        var current = $ta.redactor('source.getCode') || '';
-        var newText = current ? (current + "\n\n" + text) : text;
-        $ta.redactor('source.setCode', newText);
+        if (append) {
+          // Append mode: insert at end
+          // Use insertion.insertHtml to add content at cursor position
+          try {
+            $ta.redactor('insertion.insertHtml', text);
+            console.log('AI Response: Redactor insert (append)');
+          } catch (e) {
+            // Fallback to source.setCode if insertion doesn't work
+            var current = $ta.redactor('source.getCode') || '';
+            var newContent = current + text;
+            $ta.redactor('source.setCode', newContent);
+            console.log('AI Response: Redactor setCode (fallback), new length:', newContent.length);
+          }
+        } else {
+          // Replace mode: add with spacing
+          var current = $ta.redactor('source.getCode') || '';
+          var newText = current ? (current + "\n\n" + text) : text;
+          $ta.redactor('source.setCode', newText);
+          // Move cursor to end for subsequent appends
+          try {
+            $ta.redactor('selection.setEnd');
+          } catch (e) {}
+          console.log('AI Response: Redactor replace, new length:', newText.length);
+        }
         return true;
       }
-    } catch (e) { }
+    } catch (e) {
+      console.error('AI Response: Redactor error:', e);
+    }
 
-    // Fallback to plain textarea append
-    var current = $ta.val() || '';
-    $ta.val(current ? (current + "\n\n" + text) : text).trigger('change');
+    // Fallback to plain textarea
+    if (append) {
+      // Append mode: add to existing content
+      var current = $ta.val() || '';
+      var newContent = current + text;
+      $ta.val(newContent).trigger('change');
+      console.log('AI Response: Textarea append, new length:', newContent.length);
+    } else {
+      // Replace mode: add with spacing
+      var current = $ta.val() || '';
+      var newText = current ? (current + "\n\n" + text) : text;
+      $ta.val(newText).trigger('change');
+      console.log('AI Response: Textarea replace, new length:', newText.length);
+    }
     return true;
   }
 
@@ -137,6 +174,212 @@
     });
   }
 
+  function showStreamingOverlay() {
+    // Create streaming overlay
+    var overlayHtml =
+      '<div class="ai-streaming-overlay">' +
+        '<div class="ai-streaming-modal">' +
+          '<div class="ai-streaming-header">' +
+            '<h3>AI Response Generating...</h3>' +
+          '</div>' +
+          '<div class="ai-streaming-body">' +
+            '<div class="ai-streaming-content"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    var $overlay = $(overlayHtml);
+    $('body').append($overlay);
+
+    // Return functions to update and close
+    return {
+      update: function(text) {
+        $overlay.find('.ai-streaming-content').text(text);
+        // Auto-scroll to bottom
+        var $content = $overlay.find('.ai-streaming-content');
+        $content.scrollTop($content[0].scrollHeight);
+      },
+      close: function() {
+        $overlay.fadeOut(200, function() {
+          $overlay.remove();
+        });
+      }
+    };
+  }
+
+  function generateAIResponseStreaming($a, tid, iid, extraInstructions) {
+    var key = tid + ':' + iid;
+    setLoading($a, true);
+
+    // Buffer to accumulate all chunks
+    var streamBuffer = '';
+    var streamingUI = null;
+
+    // Prepare request data
+    var requestData = { ticket_id: tid, instance_id: iid };
+    if (extraInstructions) {
+      requestData.extra_instructions = extraInstructions;
+    }
+
+    // Get CSRF token (osTicket uses __CSRFToken__ field)
+    // Try multiple common locations
+    var csrfToken = $('input[name="__CSRFToken__"]').val() ||
+                    $('meta[name="csrf_token"]').attr('content') ||
+                    '';
+
+    // Debug: log if CSRF token was found
+    if (!csrfToken) {
+      console.warn('AI Response: CSRF token not found, request may fail');
+    }
+
+    // Add CSRF token to request data if found
+    if (csrfToken) {
+      requestData.__CSRFToken__ = csrfToken;
+    }
+
+    // Convert to URLSearchParams for fetch
+    var formData = new URLSearchParams();
+    for (var k in requestData) {
+      formData.append(k, requestData[k]);
+    }
+
+    // Use fetch with streaming - use same base endpoint as normal requests
+    var baseUrl = (window.AIResponseGen && window.AIResponseGen.ajaxEndpoint) || 'ajax.php/ai/response';
+    var streamUrl = baseUrl.replace(/\/response$/, '/response/stream');
+
+    console.log('AI Response: Starting streaming request to:', streamUrl);
+
+    // Show streaming overlay
+    streamingUI = showStreamingOverlay();
+
+    fetch(streamUrl, {
+      method: 'POST',
+      body: formData,
+      credentials: 'same-origin', // Include cookies for session/CSRF
+      headers: {
+        'Accept': 'text/event-stream'
+      }
+    }).then(function(response) {
+      if (!response.ok) {
+        // Try to read error response
+        return response.text().then(function(text) {
+          console.error('Streaming request failed:', response.status, text);
+          throw new Error('HTTP ' + response.status + ': ' + (text || 'Unknown error'));
+        });
+      }
+
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+
+      // Mark as in-flight
+      window.AIResponseGen.inflight[key] = { abort: function() { reader.cancel(); } };
+
+      function processStream() {
+        return reader.read().then(function(result) {
+          if (result.done) {
+            setLoading($a, false);
+            $a.data('aiBusy', false);
+            delete window.AIResponseGen.inflight[key];
+            return;
+          }
+
+          buffer += decoder.decode(result.value, { stream: true });
+          var lines = buffer.split('\n');
+          buffer = lines.pop(); // Keep incomplete line in buffer
+
+          var currentEvent = null;
+          lines.forEach(function(line) {
+            line = line.trim();
+            if (!line) return;
+
+            // Parse SSE format: "event: chunk" or "data: {...}"
+            if (line.indexOf('event:') === 0) {
+              // Store event type for next data line
+              currentEvent = line.substring(6).trim();
+              return;
+            }
+
+            if (line.indexOf('data:') === 0) {
+              var jsonStr = line.substring(5).trim();
+              try {
+                var data = JSON.parse(jsonStr);
+
+                // Handle different event types
+                if (currentEvent === 'chunk' && data.text) {
+                  console.log('AI Response: Received chunk:', data.text.substring(0, 50) + '...');
+
+                  // Add to buffer
+                  streamBuffer += data.text;
+
+                  // Update streaming overlay in real-time
+                  if (streamingUI) {
+                    streamingUI.update(streamBuffer);
+                  }
+                } else if (currentEvent === 'done') {
+                  console.log('AI Response: Stream completed, writing to textarea');
+
+                  // Close streaming overlay
+                  if (streamingUI) {
+                    streamingUI.close();
+                    streamingUI = null;
+                  }
+
+                  // Write final content to textarea in one go
+                  if (streamBuffer) {
+                    if (!setReplyText(streamBuffer, false)) {
+                      showToast('Failed to write response to textarea', 'error');
+                    }
+                  } else if (data.text) {
+                    // Fallback: use done event text if no chunks received
+                    setReplyText(data.text, false);
+                  }
+                } else if (currentEvent === 'error' && data.message) {
+                  // Error event
+                  console.error('AI Response: Error:', data.message);
+
+                  // Close streaming overlay
+                  if (streamingUI) {
+                    streamingUI.close();
+                    streamingUI = null;
+                  }
+
+                  showToast(data.message, 'error');
+                  setLoading($a, false);
+                  $a.data('aiBusy', false);
+                  delete window.AIResponseGen.inflight[key];
+                  reader.cancel();
+                }
+
+                currentEvent = null; // Reset after processing
+              } catch (e) {
+                console.error('Failed to parse SSE data:', e);
+              }
+            }
+          });
+
+          return processStream();
+        });
+      }
+
+      return processStream();
+
+    }).catch(function(error) {
+      // Close streaming overlay on error
+      if (streamingUI) {
+        streamingUI.close();
+        streamingUI = null;
+      }
+
+      showToast('Streaming failed: ' + error.message, 'error');
+      setLoading($a, false);
+      $a.data('aiBusy', false);
+      delete window.AIResponseGen.inflight[key];
+    });
+
+    return false;
+  }
+
   function generateAIResponse($a, tid, iid, extraInstructions) {
     var key = tid + ':' + iid;
 
@@ -159,7 +402,7 @@
 
     jq.done(function (resp) {
       if (resp && resp.ok) {
-        if (!setReplyText(resp.text || '')) {
+        if (!setReplyText(resp.text || '', false)) {
           showToast('AI response generated, but reply box not found.', 'error');
         }
       } else {
@@ -212,6 +455,7 @@
 
     var iid = ($a.data('instance-id') || '').toString();
     var showPopup = $a.data('show-popup') !== '0' && $a.data('show-popup') !== 0;
+    var enableStreaming = $a.data('enable-streaming') === '1' || $a.data('enable-streaming') === 1;
     var key = tid + ':' + iid;
 
     // Re-entrancy guard (covers accidental double fires from duplicate bindings or rapid clicks)
@@ -219,6 +463,12 @@
     // In-flight dedupe across handlers/elements for the same ticket/instance
     if (window.AIResponseGen.inflight[key]) return false;
     $a.data('aiBusy', true);
+
+    // Choose between streaming and non-streaming
+    var generateFunc = enableStreaming ? generateAIResponseStreaming : generateAIResponse;
+
+    // Debug: log which function is being used
+    console.log('AI Response: Using ' + (enableStreaming ? 'STREAMING' : 'NON-STREAMING') + ' mode');
 
     // Check if popup should be shown
     if (showPopup) {
@@ -231,11 +481,11 @@
         }
 
         // Proceed with generation
-        generateAIResponse($a, tid, iid, extraInstructions);
+        generateFunc($a, tid, iid, extraInstructions);
       });
     } else {
       // Generate directly without popup
-      generateAIResponse($a, tid, iid, '');
+      generateFunc($a, tid, iid, '');
     }
 
     return false;

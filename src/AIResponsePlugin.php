@@ -137,17 +137,19 @@ class AIResponseGeneratorPlugin extends Plugin {
      * @param array $data View data passed by reference
      */
     function onObjectView($object, &$data) {
-    // Prevent duplicate inclusion of assets
-    static $included = false;
-    if ($included) return;
-    $included = true;
-    // Emit asset links. Attempt static files, plus a small inline bootstrap
-    $base = ROOT_PATH . 'include/plugins/ai-response-generator/';
-    $js = $base . 'assets/js/main.js?v=' . urlencode(GIT_VERSION);
-    $css = $base . 'assets/css/style.css?v=' . urlencode(GIT_VERSION);
-    echo sprintf('<link rel="stylesheet" type="text/css" href="%s"/>', $css);
-    echo sprintf('<script type="text/javascript" src="%s"></script>', $js);
+    // Prevent duplicate inclusion of CSS/JS assets
+    static $assets_included = false;
+    if (!$assets_included) {
+        $assets_included = true;
+        // Emit asset links. Attempt static files, plus a small inline bootstrap
+        $base = ROOT_PATH . 'include/plugins/ai-response-generator/';
+        $js = $base . 'assets/js/main.js?v=' . urlencode(GIT_VERSION);
+        $css = $base . 'assets/css/style.css?v=' . urlencode(GIT_VERSION);
+        echo sprintf('<link rel="stylesheet" type="text/css" href="%s"/>', $css);
+        echo sprintf('<script type="text/javascript" src="%s"></script>', $js);
+    }
 
+    // IMPORTANT: Always run inline script to refresh ticket data on pjax navigation
     // Inline bootstrap for route and toolbar button injection
     ?>
     <script type="text/javascript">
@@ -155,7 +157,8 @@ class AIResponseGeneratorPlugin extends Plugin {
     window.AIResponseGen.ajaxEndpoint = 'ajax.php/ai/response';
 
     // Inject prominent toolbar button for each enabled instance
-    window.AIResponseGen.toolbarInstances = window.AIResponseGen.toolbarInstances || <?php echo json_encode($this->getToolbarButtonData($object)); ?>;
+    // IMPORTANT: Always refresh toolbar instances data on page load to fix pjax navigation issues
+    window.AIResponseGen.toolbarInstances = <?php echo json_encode($this->getToolbarButtonData($object)); ?>;
 
     (function() {
         function injectToolbarButtons() {

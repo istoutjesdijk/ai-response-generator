@@ -6,7 +6,7 @@
 require_once(INCLUDE_DIR . 'class.ajax.php');
 require_once(INCLUDE_DIR . 'class.ticket.php');
 require_once(INCLUDE_DIR . 'class.thread.php');
-require_once(__DIR__ . '/../api/OpenAIClient.php');
+require_once(__DIR__ . '/../api/AIClient.php');
 require_once(__DIR__ . '/Constants.php');
 
 class AIAjaxController extends AjaxController {
@@ -86,21 +86,80 @@ class AIAjaxController extends AjaxController {
 
         $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
         if ($extra_instructions) {
-            $messages[] = array('role' => 'user', 'content' => "Special instructions for this response: " . $extra_instructions);
+            $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra_instructions);
         }
 
-        $thread = $ticket->getThread();
-        $entries = $thread ? $thread->getEntries() : array();
-        $count = 0;
+        // Check if vision support is enabled
+        $visionEnabled = (bool)$cfg->get('enable_vision');
+        $provider = $this->detectProvider($api_url, $model);
+        $providerImageLimit = $this->getProviderImageLimit($provider);
 
-        foreach ($entries as $E) {
-            if ($count++ >= $max_thread_entries) break;
-            $type = $E->getType();
-            $body = ThreadEntryBody::clean($E->getBody());
-            $who  = $E->getPoster();
-            $who  = is_object($who) ? $who->getName() : 'User';
-            $role = ($type == 'M') ? 'user' : 'assistant';
-            $messages[] = array('role' => $role, 'content' => sprintf('[%s] %s', $who, $body));
+        // Get max images from config
+        $maxImages = $cfg->get('max_images');
+        if ($maxImages === null || $maxImages === '' || !is_numeric($maxImages) || $maxImages < 0) {
+            $maxImages = AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES;
+        } else {
+            $maxImages = intval($maxImages);
+        }
+        // Respect provider limits
+        $maxImages = min($maxImages, $providerImageLimit);
+
+        $thread = $ticket->getThread();
+        if ($thread) {
+            // Use osTicket's QuerySet methods for efficient database query
+            // Clone to avoid modifying cached entries, order by most recent, limit to configured amount
+            $entries = clone $thread->getEntries();
+            $entries->order_by('-created')->limit($max_thread_entries);
+
+            // Reverse to get chronological order (oldest to newest)
+            $entryList = array_reverse(iterator_to_array($entries));
+
+            $imageCount = 0;
+
+            foreach ($entryList as $E) {
+                $type = $E->getType();
+                $body = ThreadEntryBody::clean($E->getBody());
+                $who  = $E->getPoster();
+                $who  = is_object($who) ? $who->getName() : 'User';
+
+                // Map to role for AI context
+                $role = ($type == 'M') ? 'user' : 'assistant';
+
+                // Only add prefix for internal notes (type 'N')
+                if ($type === 'N') {
+                    $textContent = sprintf('[Internal Note - %s] %s', $who, $body);
+                } else {
+                    $textContent = sprintf('%s: %s', $who, $body);
+                }
+
+                // Process images if vision is enabled
+                $images = array();
+                if ($visionEnabled && $maxImages > 0) {
+                    $images = $this->processImageAttachments($E, $cfg, $imageCount, $maxImages);
+                }
+
+                // If there are images, use content array format; otherwise use simple string
+                if (!empty($images)) {
+                    $content = array();
+                    // Add text first
+                    $content[] = array('type' => 'text', 'text' => $textContent);
+                    // Add images
+                    foreach ($images as $img) {
+                        $content[] = array(
+                            'type' => 'image',
+                            'source' => array(
+                                'type' => 'base64',
+                                'media_type' => $img['type'],
+                                'data' => $img['data']
+                            )
+                        );
+                    }
+                    $messages[] = array('role' => $role, 'content' => $content);
+                } else {
+                    // No images, use simple string format
+                    $messages[] = array('role' => $role, 'content' => $textContent);
+                }
+            }
         }
 
         $rag_text = $this->loadRagDocuments($cfg);
@@ -136,7 +195,7 @@ class AIAjaxController extends AjaxController {
         };
 
         try {
-            $client = new OpenAIClient($api_url, $api_key);
+            $client = new AIClient($api_url, $api_key);
             $provider = 'auto';
             $anthVersion = trim((string)$cfg->get('anthropic_version')) ?: AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION;
 
@@ -244,26 +303,84 @@ class AIAjaxController extends AjaxController {
         $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
         $messages[] = array('role' => 'system', 'content' => $system);
 
-        // Add extra instructions from user if provided - FIRST as user message
+        // Add extra instructions as system message (meta-instruction for the AI)
         $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
         if ($extra_instructions) {
-            $messages[] = array('role' => 'user', 'content' => "Special instructions for this response: " . $extra_instructions);
+            $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra_instructions);
         }
+
+        // Check if vision support is enabled
+        $visionEnabled = (bool)$cfg->get('enable_vision');
+        $provider = $this->detectProvider($api_url, $model);
+        $providerImageLimit = $this->getProviderImageLimit($provider);
+
+        // Get max images from config
+        $maxImages = $cfg->get('max_images');
+        if ($maxImages === null || $maxImages === '' || !is_numeric($maxImages) || $maxImages < 0) {
+            $maxImages = AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES;
+        } else {
+            $maxImages = intval($maxImages);
+        }
+        // Respect provider limits
+        $maxImages = min($maxImages, $providerImageLimit);
 
         // Build thread context using latest thread entries
         $thread = $ticket->getThread();
-        $entries = $thread ? $thread->getEntries() : array();
-        $count = 0;
+        if ($thread) {
+            // Use osTicket's QuerySet methods for efficient database query
+            // Clone to avoid modifying cached entries, order by most recent, limit to configured amount
+            $entries = clone $thread->getEntries();
+            $entries->order_by('-created')->limit($max_thread_entries);
 
-        foreach ($entries as $E) {
-            // Cap to recent context to avoid huge prompts (now configurable)
-            if ($count++ >= $max_thread_entries) break;
-            $type = $E->getType();
-            $body = ThreadEntryBody::clean($E->getBody());
-            $who  = $E->getPoster();
-            $who  = is_object($who) ? $who->getName() : 'User';
-            $role = ($type == 'M') ? 'user' : 'assistant';
-            $messages[] = array('role' => $role, 'content' => sprintf('[%s] %s', $who, $body));
+            // Reverse to get chronological order (oldest to newest)
+            $entryList = array_reverse(iterator_to_array($entries));
+
+            $imageCount = 0;
+
+            foreach ($entryList as $E) {
+                $type = $E->getType();
+                $body = ThreadEntryBody::clean($E->getBody());
+                $who  = $E->getPoster();
+                $who  = is_object($who) ? $who->getName() : 'User';
+
+                // Map to role for AI context
+                $role = ($type == 'M') ? 'user' : 'assistant';
+
+                // Only add prefix for internal notes (type 'N')
+                if ($type === 'N') {
+                    $textContent = sprintf('[Internal Note - %s] %s', $who, $body);
+                } else {
+                    $textContent = sprintf('%s: %s', $who, $body);
+                }
+
+                // Process images if vision is enabled
+                $images = array();
+                if ($visionEnabled && $maxImages > 0) {
+                    $images = $this->processImageAttachments($E, $cfg, $imageCount, $maxImages);
+                }
+
+                // If there are images, use content array format; otherwise use simple string
+                if (!empty($images)) {
+                    $content = array();
+                    // Add text first
+                    $content[] = array('type' => 'text', 'text' => $textContent);
+                    // Add images
+                    foreach ($images as $img) {
+                        $content[] = array(
+                            'type' => 'image',
+                            'source' => array(
+                                'type' => 'base64',
+                                'media_type' => $img['type'],
+                                'data' => $img['data']
+                            )
+                        );
+                    }
+                    $messages[] = array('role' => $role, 'content' => $content);
+                } else {
+                    // No images, use simple string format
+                    $messages[] = array('role' => $role, 'content' => $textContent);
+                }
+            }
         }
 
         // Load RAG documents content (if any) - last
@@ -276,7 +393,7 @@ class AIAjaxController extends AjaxController {
             if (stripos($model, 'gpt-5-nano') !== false && $temperature != 1) {
                 throw new Exception(__('This model only supports temperature=1.'));
             }
-            $client = new OpenAIClient($api_url, $api_key);
+            $client = new AIClient($api_url, $api_key);
             // Let the client auto-detect the provider
             $provider = 'auto';
             $anthVersion = trim((string)$cfg->get('anthropic_version')) ?: AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION;
@@ -341,5 +458,122 @@ class AIAjaxController extends AjaxController {
             '{agent_name}' => $agentName,
         );
         return strtr($template, $replacements);
+    }
+
+    /**
+     * Processes image attachments from a thread entry for vision-capable AI models
+     *
+     * @param ThreadEntry $entry Thread entry to process attachments from
+     * @param PluginConfig $cfg Plugin configuration
+     * @param int &$imageCount Current image count (modified by reference)
+     * @param int $maxImages Maximum images allowed
+     * @return array Array of image data arrays with 'type', 'data', and 'name' keys
+     */
+    private function processImageAttachments($entry, $cfg, &$imageCount, $maxImages) {
+        $images = array();
+
+        // Check if we've reached the limit
+        if ($imageCount >= $maxImages) {
+            return $images;
+        }
+
+        // Get configuration
+        $includeInline = (bool)$cfg->get('include_inline_images');
+        $maxSizeMB = $cfg->get('max_image_size_mb');
+        if ($maxSizeMB === null || $maxSizeMB === '' || !is_numeric($maxSizeMB) || $maxSizeMB < 0) {
+            $maxSizeMB = AIResponseGeneratorConstants::DEFAULT_MAX_IMAGE_SIZE_MB;
+        } else {
+            $maxSizeMB = floatval($maxSizeMB);
+        }
+        $maxSizeBytes = $maxSizeMB * 1048576; // Convert MB to bytes
+
+        // Get attachments from entry
+        $attachments = $entry->getAttachments();
+        if (!$attachments) {
+            return $images;
+        }
+
+        foreach ($attachments as $attachment) {
+            // Stop if we've reached the limit
+            if ($imageCount >= $maxImages) {
+                break;
+            }
+
+            // Skip inline images if configured
+            if ($attachment->inline && !$includeInline) {
+                continue;
+            }
+
+            $file = $attachment->getFile();
+            if (!$file) {
+                continue;
+            }
+
+            // Check MIME type - only process images
+            $mimeType = $file->getType();
+            if (!in_array($mimeType, AIResponseGeneratorConstants::SUPPORTED_IMAGE_TYPES)) {
+                continue;
+            }
+
+            // Check file size
+            $fileSize = $file->getSize();
+            if ($fileSize > $maxSizeBytes) {
+                continue; // Skip images that are too large
+            }
+
+            // Get image data and encode to base64
+            try {
+                $imageData = $file->getData();
+                if (!$imageData) {
+                    continue;
+                }
+
+                $base64Data = base64_encode($imageData);
+
+                $images[] = array(
+                    'type' => $mimeType,
+                    'data' => $base64Data,
+                    'name' => $attachment->getFilename(),
+                    'size' => $fileSize
+                );
+
+                $imageCount++;
+            } catch (Exception $e) {
+                // Skip this attachment if there's an error reading it
+                continue;
+            }
+        }
+
+        return $images;
+    }
+
+    /**
+     * Determines the maximum number of images allowed for the given provider
+     *
+     * @param string $provider Provider type ('openai' or 'anthropic')
+     * @return int Maximum number of images allowed
+     */
+    private function getProviderImageLimit($provider) {
+        if ($provider === 'anthropic') {
+            return AIResponseGeneratorConstants::ANTHROPIC_MAX_IMAGES;
+        }
+        // Default to OpenAI limit (also used for 'openai' and 'auto')
+        return AIResponseGeneratorConstants::OPENAI_MAX_IMAGES;
+    }
+
+    /**
+     * Detects the AI provider from URL and model name
+     *
+     * @param string $apiUrl API URL
+     * @param string $model Model name
+     * @return string Provider type ('openai' or 'anthropic')
+     */
+    private function detectProvider($apiUrl, $model) {
+        if (stripos($apiUrl, 'anthropic.com') !== false ||
+            stripos($model, 'claude') === 0 ||
+            preg_match('#/v1/messages$#', $apiUrl)) {
+            return 'anthropic';
+        }
+        return 'openai';
     }
 }

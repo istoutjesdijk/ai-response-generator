@@ -1,12 +1,12 @@
 <?php
 /*********************************************************************
- * Simple OpenAI-compatible client
- * Supports OpenAI Chat Completions compatible APIs.
+ * AI API Client
+ * Supports OpenAI, Anthropic Claude, and OpenAI-compatible APIs.
  *********************************************************************/
 
 require_once(__DIR__ . '/../src/Constants.php');
 
-class OpenAIClient {
+class AIClient {
     private $baseUrl;
     private $apiKey;
 
@@ -73,13 +73,18 @@ class OpenAIClient {
             $claudeMsgs = array();
             foreach ($messages as $m) {
                 $role = $m['role'] ?? 'user';
-                $content = is_array($m['content']) ? json_encode($m['content']) : (string)$m['content'];
+                $content = $m['content'];
+
+                // For system messages, extract text (content is always string for system)
                 if ($role === 'system') {
-                    if (strlen(trim($content))) $systemParts[] = $content;
+                    if (strlen(trim((string)$content))) $systemParts[] = (string)$content;
                     continue;
                 }
+
                 // Keep only user/assistant roles for Anthropic
                 if ($role === 'user' || $role === 'assistant') {
+                    // Content can be string or array (for vision support)
+                    // Anthropic natively supports the content array format we're using
                     $claudeMsgs[] = array('role' => $role, 'content' => $content);
                 }
             }
@@ -189,9 +194,12 @@ class OpenAIClient {
             $url .= '/chat/completions';
         }
 
+        // Transform messages for OpenAI format (convert Anthropic-style images to OpenAI format)
+        $openaiMessages = $this->transformMessagesForOpenAI($messages);
+
         $payload = array(
             'model' => $model,
-            'messages' => $messages,
+            'messages' => $openaiMessages,
             'temperature' => $temperature,
         );
         // Add the correct parameter name for max tokens
@@ -272,5 +280,63 @@ class OpenAIClient {
 
         // Fallback: return the whole body, best-effort
         return is_string($resp) ? $resp : '';
+    }
+
+    /**
+     * Transforms messages from Anthropic format to OpenAI format
+     * Converts image blocks from Anthropic's format to OpenAI's image_url format
+     *
+     * @param array $messages Messages in Anthropic format
+     * @return array Messages in OpenAI format
+     */
+    private function transformMessagesForOpenAI($messages) {
+        $transformed = array();
+
+        foreach ($messages as $msg) {
+            $role = $msg['role'] ?? 'user';
+            $content = $msg['content'];
+
+            // If content is a string, no transformation needed
+            if (is_string($content)) {
+                $transformed[] = array('role' => $role, 'content' => $content);
+                continue;
+            }
+
+            // If content is an array, transform image blocks to OpenAI format
+            if (is_array($content)) {
+                $openaiContent = array();
+
+                foreach ($content as $block) {
+                    $type = $block['type'] ?? '';
+
+                    if ($type === 'text') {
+                        // Text block - pass through
+                        $openaiContent[] = array(
+                            'type' => 'text',
+                            'text' => $block['text'] ?? ''
+                        );
+                    } elseif ($type === 'image' && isset($block['source'])) {
+                        // Image block - convert from Anthropic to OpenAI format
+                        $source = $block['source'];
+                        $mediaType = $source['media_type'] ?? 'image/jpeg';
+                        $base64Data = $source['data'] ?? '';
+
+                        // OpenAI expects: data:{media_type};base64,{data}
+                        $dataUrl = "data:{$mediaType};base64,{$base64Data}";
+
+                        $openaiContent[] = array(
+                            'type' => 'image_url',
+                            'image_url' => array(
+                                'url' => $dataUrl
+                            )
+                        );
+                    }
+                }
+
+                $transformed[] = array('role' => $role, 'content' => $openaiContent);
+            }
+        }
+
+        return $transformed;
     }
 }

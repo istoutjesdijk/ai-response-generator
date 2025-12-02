@@ -141,6 +141,36 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             )
         ));
 
+        $fields['enable_vision'] = new BooleanField(array(
+            'label' => __('Enable Vision Support'),
+            'default' => false,
+            'configuration' => array(
+                'desc' => __('When enabled, image attachments from ticket messages are sent to vision-capable AI models (GPT-4o, Claude 3+). NOTE: Vision increases API costs and requires compatible models.')
+            )
+        ));
+
+        $fields['max_images'] = new TextboxField(array(
+            'label' => __('Max Images per Request'),
+            'required' => false,
+            'hint' => __('Maximum number of images to send per AI request. OpenAI supports up to 10, Anthropic up to 100. Default: 5. Set to 0 to disable.'),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => '5'),
+        ));
+
+        $fields['max_image_size_mb'] = new TextboxField(array(
+            'label' => __('Max Image Size (MB)'),
+            'required' => false,
+            'hint' => __('Maximum size per image in megabytes. Larger images are skipped. OpenAI recommends max 20MB, Anthropic 32MB total. Default: 5 MB.'),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => '5'),
+        ));
+
+        $fields['include_inline_images'] = new BooleanField(array(
+            'label' => __('Include Inline Images'),
+            'default' => false,
+            'configuration' => array(
+                'desc' => __('When enabled, inline/embedded images (e.g., email signatures, logos) are also sent to the AI. Usually you want this disabled to only send actual attachments.')
+            )
+        ));
+
         return $fields;
     }
 }

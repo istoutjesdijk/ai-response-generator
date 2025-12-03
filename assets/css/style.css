@@ -7,14 +7,22 @@
   position: relative;
 }
 
+/* Verberg het icon tijdens loading */
+.ai-loading i,
+.ai-loading .icon-magic {
+  opacity: 0;
+  visibility: hidden;
+}
+
 .ai-loading:after {
   content: '';
   position: absolute;
-  right: -20px;
+  left: 50%;
   top: 50%;
-  width: 16px;
-  height: 16px;
-  margin-top: -8px;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  margin-top: -7px;
   border: 2px solid #0e76a8;
   border-top-color: transparent;
   border-radius: 50%;

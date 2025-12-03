@@ -129,15 +129,6 @@ Configure multiple plugin instances for:
 - All requests go through backend (no client-side API calls)
 - Vision support processes images server-side only
 
-## 📚 Documentation
-
-For detailed technical documentation, see [CLAUDE.md](CLAUDE.md):
-- Architecture and signal flow
-- Message formatting and ordering
-- Vision support implementation
-- Streaming implementation details
-- Development guidelines
-
 ## 🐛 Troubleshooting
 
 ### Button doesn't appear

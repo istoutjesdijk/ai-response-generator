@@ -8,7 +8,7 @@ This plugin adds AI-generated responses to osTicket. Agents can generate a draft
 
 The osTicket repository: https://github.com/osTicket/osTicket/
 
-The code should remain simple and easy to maintain.
+The code should remain simple and easy to maintain. This is a plugin for OSticket so try to make use of OStickets libaries and tools as much as possible. Make sure it stays a plugin and not too complex.
 
 ## File Structure
 

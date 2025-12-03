@@ -125,10 +125,15 @@ class AIAjaxController extends AjaxController {
                 // Map to role for AI context
                 $role = ($type == 'M') ? 'user' : 'assistant';
 
-                // Only add prefix for internal notes (type 'N')
+                // Format content based on entry type
                 if ($type === 'N') {
+                    // Internal notes: always include name with prefix
                     $textContent = sprintf('[Internal Note - %s] %s', $who, $body);
+                } elseif ($type === 'M' && $who === 'User') {
+                    // Customer message with fallback name: just the body (role says it's user)
+                    $textContent = $body;
                 } else {
+                    // Customer with real name or Agent response: include name
                     $textContent = sprintf('%s: %s', $who, $body);
                 }
 
@@ -346,10 +351,15 @@ class AIAjaxController extends AjaxController {
                 // Map to role for AI context
                 $role = ($type == 'M') ? 'user' : 'assistant';
 
-                // Only add prefix for internal notes (type 'N')
+                // Format content based on entry type
                 if ($type === 'N') {
+                    // Internal notes: always include name with prefix
                     $textContent = sprintf('[Internal Note - %s] %s', $who, $body);
+                } elseif ($type === 'M' && $who === 'User') {
+                    // Customer message with fallback name: just the body (role says it's user)
+                    $textContent = $body;
                 } else {
+                    // Customer with real name or Agent response: include name
                     $textContent = sprintf('%s: %s', $who, $body);
                 }
 

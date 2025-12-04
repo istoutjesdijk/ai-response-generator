@@ -271,13 +271,112 @@
       var reader = response.body.getReader();
       var decoder = new TextDecoder();
       var buffer = '';
+      var currentEvent = null; // Track event type across chunks
 
       // Mark as in-flight
       window.AIResponseGen.inflight[key] = { abort: function() { reader.cancel(); } };
 
+      // Helper function to process SSE lines
+      function processLines(lines) {
+        lines.forEach(function(line) {
+          line = line.trim();
+          if (!line) return;
+
+          // Parse SSE format: "event: chunk" or "data: {...}"
+          if (line.indexOf('event:') === 0) {
+            // Store event type for next data line
+            currentEvent = line.substring(6).trim();
+            return;
+          }
+
+          if (line.indexOf('data:') === 0) {
+            var jsonStr = line.substring(5).trim();
+            try {
+              var data = JSON.parse(jsonStr);
+
+              // Handle different event types
+              if (currentEvent === 'chunk' && data.text) {
+                console.log('AI Response: Received chunk:', data.text.substring(0, 50) + '...');
+
+                // Add to buffer
+                streamBuffer += data.text;
+
+                // Update streaming overlay in real-time
+                if (streamingUI) {
+                  streamingUI.update(streamBuffer);
+                }
+              } else if (currentEvent === 'done') {
+                console.log('AI Response: Stream completed, writing to textarea');
+
+                // Close streaming overlay
+                if (streamingUI) {
+                  streamingUI.close();
+                  streamingUI = null;
+                }
+
+                // Write final content to textarea in one go
+                if (streamBuffer) {
+                  if (!setReplyText(streamBuffer, false)) {
+                    showToast('Failed to write response to textarea', 'error');
+                  }
+                } else if (data.text) {
+                  // Fallback: use done event text if no chunks received
+                  setReplyText(data.text, false);
+                }
+
+                // Clean up after done event
+                setLoading($a, false);
+                $a.data('aiBusy', false);
+                delete window.AIResponseGen.inflight[key];
+              } else if (currentEvent === 'error' && data.message) {
+                // Error event
+                console.error('AI Response: Error:', data.message);
+
+                // Close streaming overlay
+                if (streamingUI) {
+                  streamingUI.close();
+                  streamingUI = null;
+                }
+
+                showToast(data.message, 'error');
+                setLoading($a, false);
+                $a.data('aiBusy', false);
+                delete window.AIResponseGen.inflight[key];
+                reader.cancel();
+              }
+
+              currentEvent = null; // Reset after processing data
+            } catch (e) {
+              console.error('Failed to parse SSE data:', e);
+            }
+          }
+        });
+      }
+
       function processStream() {
         return reader.read().then(function(result) {
           if (result.done) {
+            // Process any remaining data in buffer before finishing
+            if (buffer.trim()) {
+              console.log('AI Response: Processing remaining buffer on stream end');
+              var remainingLines = buffer.split('\n');
+              processLines(remainingLines);
+            }
+
+            // Ensure overlay is closed and state is cleaned up even if done event was missed
+            if (streamingUI) {
+              console.warn('AI Response: Stream ended without done event, closing overlay');
+              streamingUI.close();
+              streamingUI = null;
+
+              // Write whatever we have in the buffer
+              if (streamBuffer) {
+                if (!setReplyText(streamBuffer, false)) {
+                  showToast('Failed to write response to textarea', 'error');
+                }
+              }
+            }
+
             setLoading($a, false);
             $a.data('aiBusy', false);
             delete window.AIResponseGen.inflight[key];
@@ -288,75 +387,7 @@
           var lines = buffer.split('\n');
           buffer = lines.pop(); // Keep incomplete line in buffer
 
-          var currentEvent = null;
-          lines.forEach(function(line) {
-            line = line.trim();
-            if (!line) return;
-
-            // Parse SSE format: "event: chunk" or "data: {...}"
-            if (line.indexOf('event:') === 0) {
-              // Store event type for next data line
-              currentEvent = line.substring(6).trim();
-              return;
-            }
-
-            if (line.indexOf('data:') === 0) {
-              var jsonStr = line.substring(5).trim();
-              try {
-                var data = JSON.parse(jsonStr);
-
-                // Handle different event types
-                if (currentEvent === 'chunk' && data.text) {
-                  console.log('AI Response: Received chunk:', data.text.substring(0, 50) + '...');
-
-                  // Add to buffer
-                  streamBuffer += data.text;
-
-                  // Update streaming overlay in real-time
-                  if (streamingUI) {
-                    streamingUI.update(streamBuffer);
-                  }
-                } else if (currentEvent === 'done') {
-                  console.log('AI Response: Stream completed, writing to textarea');
-
-                  // Close streaming overlay
-                  if (streamingUI) {
-                    streamingUI.close();
-                    streamingUI = null;
-                  }
-
-                  // Write final content to textarea in one go
-                  if (streamBuffer) {
-                    if (!setReplyText(streamBuffer, false)) {
-                      showToast('Failed to write response to textarea', 'error');
-                    }
-                  } else if (data.text) {
-                    // Fallback: use done event text if no chunks received
-                    setReplyText(data.text, false);
-                  }
-                } else if (currentEvent === 'error' && data.message) {
-                  // Error event
-                  console.error('AI Response: Error:', data.message);
-
-                  // Close streaming overlay
-                  if (streamingUI) {
-                    streamingUI.close();
-                    streamingUI = null;
-                  }
-
-                  showToast(data.message, 'error');
-                  setLoading($a, false);
-                  $a.data('aiBusy', false);
-                  delete window.AIResponseGen.inflight[key];
-                  reader.cancel();
-                }
-
-                currentEvent = null; // Reset after processing
-              } catch (e) {
-                console.error('Failed to parse SSE data:', e);
-              }
-            }
-          });
+          processLines(lines);
 
           return processStream();
         });

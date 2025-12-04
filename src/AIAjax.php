@@ -167,10 +167,6 @@ class AIAjaxController extends AjaxController {
             }
         }
 
-        $rag_text = $this->loadRagDocuments($cfg);
-        if ($rag_text)
-            $messages[] = array('role' => 'system', 'content' => "Additional knowledge base context:\n".$rag_text);
-
         // Validation
         if (stripos($model, 'gpt-5-nano') !== false && $temperature != 1) {
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('This model only supports temperature=1.'))));
@@ -393,11 +389,6 @@ class AIAjaxController extends AjaxController {
             }
         }
 
-        // Load RAG documents content (if any) - last
-        $rag_text = $this->loadRagDocuments($cfg);
-        if ($rag_text)
-            $messages[] = array('role' => 'system', 'content' => "Additional knowledge base context:\n".$rag_text);
-
         try {
             // Validation: some models only support temperature=1
             if (stripos($model, 'gpt-5-nano') !== false && $temperature != 1) {
@@ -425,22 +416,6 @@ class AIAjaxController extends AjaxController {
         catch (Throwable $t) {
             return $this->encode(array('ok' => false, 'error' => $t->getMessage()));
         }
-    }
-
-    /**
-     * Loads and processes RAG (Retrieval-Augmented Generation) content from config
-     *
-     * @param PluginConfig $cfg Plugin configuration instance
-     * @return string RAG content, truncated if necessary
-     */
-    private function loadRagDocuments($cfg) {
-        $rag = trim((string)$cfg->get('rag_content'));
-        if (!$rag) return '';
-        // Limit RAG content length to prevent excessive prompt sizes
-        if (strlen($rag) > AIResponseGeneratorConstants::MAX_RAG_CONTENT_LENGTH) {
-            $rag = substr($rag, 0, AIResponseGeneratorConstants::MAX_RAG_CONTENT_LENGTH) . "\n... (truncated)";
-        }
-        return $rag;
     }
 
     /**

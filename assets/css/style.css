@@ -7,11 +7,10 @@
   position: relative;
 }
 
-/* Verberg het icon tijdens loading */
+/* Verberg het icon tijdens loading en verwijder ruimte */
 .ai-loading i,
 .ai-loading .icon-magic {
-  opacity: 0;
-  visibility: hidden;
+  display: none !important;
 }
 
 .ai-loading:after {
@@ -265,6 +264,7 @@ a.action-button.ai-generate-reply {
   padding: 6px 10px;
   border-radius: 3px;
   transition: all 0.2s;
+  position: relative;
 }
 
 a.action-button.ai-generate-reply:hover {

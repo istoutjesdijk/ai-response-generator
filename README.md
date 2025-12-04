@@ -11,7 +11,6 @@ An AI-powered response generator plugin for osTicket that helps agents generate 
 - **Multi-Instance Support**: Configure multiple AI providers simultaneously for different teams/workflows
 - **Smart Context Building**: Includes recent ticket conversation with message types (Customer, Agent, Internal Note)
 - **Response Templates**: Customizable output format with placeholders (`{user_name}`, `{ticket_number}`, etc.)
-- **RAG Support**: Add custom knowledge base content to enrich AI responses
 
 ### 🚀 New in This Fork
 
@@ -82,7 +81,6 @@ An AI-powered response generator plugin for osTicket that helps agents generate 
 - **Max Thread Entries**: Number of recent messages to include (default: 20)
 - **System Prompt**: Custom instructions for AI behavior
 - **Response Template**: Format output with placeholders
-- **RAG Content**: Additional context/knowledge base (max 20,000 chars)
 - **Show Instructions Popup**: Allow agents to add special instructions per response
 - **Enable Streaming**: Real-time typewriter effect (default: disabled)
 
@@ -158,7 +156,6 @@ Configure multiple plugin instances for:
 | Performance Optimized | ❌ | ✅ QuerySet methods |
 | Bug Fixes | - | ✅ Pjax, message order |
 | Anthropic Support | ❌ | ✅ Full Claude support |
-| RAG Content | Basic | ✅ Enhanced (20K chars) |
 
 ## 🙏 Credits
 

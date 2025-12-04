@@ -37,5 +37,4 @@ Enhanced Fork Modifications Include:
 - Message Type Labels (Customer/Agent/Note) - v0.2.3
 - Bug Fixes (Pjax navigation, message ordering) - v0.2.1, v0.2.2
 - Full Anthropic Claude API Support
-- Enhanced RAG Content Support
 - Improved Configuration Options

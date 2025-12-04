@@ -92,17 +92,6 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             ),
         ));
 
-        $fields['rag_content'] = new TextareaField(array(
-            'label' => __('RAG Content'),
-            'required' => false,
-            'hint' => __('Paste or type additional context here. This content will be used to enrich AI responses.'),
-            'configuration' => array(
-                'rows' => 10,
-                'html' => false,
-                'placeholder' => __('Paste your RAG content here...'),
-            ),
-        ));
-
         $fields['temperature'] = new TextboxField(array(
             'label' => __('Temperature'),
             'required' => false,

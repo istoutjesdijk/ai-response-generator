@@ -13,7 +13,6 @@ class AIResponseGeneratorConstants {
 
     // Thread and content limits
     const MAX_THREAD_ENTRIES = 20;
-    const MAX_RAG_CONTENT_LENGTH = 20000;
 
     // Vision support defaults
     const DEFAULT_MAX_IMAGES = 5;

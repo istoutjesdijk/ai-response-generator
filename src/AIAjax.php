@@ -95,7 +95,11 @@ class AIAjaxController extends AjaxController {
         $system = $this->replaceTemplateVars($system, $ticket, $thisstaff);
         $messages[] = array('role' => 'system', 'content' => $system);
 
-        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
+        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? ''));
+        // Limit extra instructions length to prevent abuse
+        if (strlen($extra_instructions) > AIResponseGeneratorConstants::MAX_EXTRA_INSTRUCTIONS_LENGTH) {
+            $extra_instructions = substr($extra_instructions, 0, AIResponseGeneratorConstants::MAX_EXTRA_INSTRUCTIONS_LENGTH);
+        }
         if ($extra_instructions) {
             $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra_instructions);
         }
@@ -284,7 +288,11 @@ class AIAjaxController extends AjaxController {
         $messages[] = array('role' => 'system', 'content' => $system);
 
         // Add extra instructions as system message (meta-instruction for the AI)
-        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
+        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? ''));
+        // Limit extra instructions length to prevent abuse
+        if (strlen($extra_instructions) > AIResponseGeneratorConstants::MAX_EXTRA_INSTRUCTIONS_LENGTH) {
+            $extra_instructions = substr($extra_instructions, 0, AIResponseGeneratorConstants::MAX_EXTRA_INSTRUCTIONS_LENGTH);
+        }
         if ($extra_instructions) {
             $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra_instructions);
         }

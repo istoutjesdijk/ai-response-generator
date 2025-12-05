@@ -38,10 +38,10 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'configuration' => array('size' => 80, 'length' => 255),
         ));
 
-        $fields['api_key'] = new TextboxField(array(
+        $fields['api_key'] = new PasswordField(array(
             'label' => __('API Key'),
             'required' => false,
-            'hint' => __('API key used for Authorization header.'),
+            'hint' => __('API key used for Authorization header. Stored encrypted.'),
             'configuration' => array('size' => 80, 'length' => 255),
         ));
 

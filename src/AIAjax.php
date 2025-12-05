@@ -12,6 +12,38 @@ require_once(__DIR__ . '/Constants.php');
 class AIAjaxController extends AjaxController {
 
     /**
+     * Validates CSRF token for POST requests
+     *
+     * @return void Returns error response if validation fails
+     */
+    private function validateCSRF() {
+        global $ost;
+
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST')
+            return;
+
+        $token = $_POST['__CSRFToken__'] ?? $_SERVER['HTTP_X_CSRFTOKEN'] ?? null;
+        if (!$ost || !$ost->getCSRF() || !$ost->getCSRF()->validateToken($token)) {
+            Http::response(403, $this->encode(array('ok' => false, 'error' => __('CSRF token validation failed'))));
+        }
+    }
+
+    /**
+     * Logs an error message to osTicket's system log
+     *
+     * @param string $message Error message to log
+     * @param bool $alert Whether to send admin alert (default: false)
+     * @return void
+     */
+    private function logError($message, $alert = false) {
+        global $ost;
+
+        if ($ost) {
+            $ost->logError('AI Response Generator', $message, $alert);
+        }
+    }
+
+    /**
      * Generates AI response with streaming for a ticket
      *
      * @return void Streams SSE events directly to the client
@@ -19,6 +51,7 @@ class AIAjaxController extends AjaxController {
     function generateStreaming() {
         global $thisstaff;
         $this->staffOnly();
+        $this->validateCSRF();
 
         $ticket_id = (int) ($_POST['ticket_id'] ?? $_GET['ticket_id'] ?? 0);
         if (!$ticket_id || !($ticket = Ticket::lookup($ticket_id)))
@@ -42,46 +75,24 @@ class AIAjaxController extends AjaxController {
         if (!$cfg)
             Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
 
-        // Build configuration parameters and validate BEFORE setting SSE headers
-        $api_url = rtrim($cfg->get('api_url'), '/');
-        $api_key = $cfg->get('api_key');
-        $model   = $cfg->get('model');
-        $max_tokens_param = trim((string)$cfg->get('max_tokens_param')) ?: 'max_tokens';
-
-        $temperature = $cfg->get('temperature');
-        if ($temperature === null || $temperature === '' || !is_numeric($temperature)) {
-            $temperature = AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
-        } else {
-            $temperature = floatval($temperature);
-        }
-
-        $max_tokens = $cfg->get('max_tokens');
-        if ($max_tokens === null || $max_tokens === '' || !is_numeric($max_tokens) || $max_tokens < 1) {
-            $max_tokens = AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
-        } else {
-            $max_tokens = intval($max_tokens);
-        }
-
-        $timeout = $cfg->get('timeout');
-        if ($timeout === null || $timeout === '' || !is_numeric($timeout) || $timeout < 1) {
-            $timeout = AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
-        } else {
-            $timeout = intval($timeout);
-        }
+        // Get configuration values (defaults are handled by PluginConfig)
+        $api_url          = rtrim($cfg->get('api_url'), '/');
+        $api_key          = $cfg->get('api_key');
+        $model            = $cfg->get('model');
+        $max_tokens_param = $cfg->get('max_tokens_param');
+        $temperature      = floatval($cfg->get('temperature'));
+        $max_tokens       = intval($cfg->get('max_tokens'));
+        $timeout          = intval($cfg->get('timeout'));
+        $max_thread_entries = intval($cfg->get('max_thread_entries'));
 
         if (!$api_url || !$model)
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
 
-        $max_thread_entries = $cfg->get('max_thread_entries');
-        if ($max_thread_entries === null || $max_thread_entries === '' || !is_numeric($max_thread_entries) || $max_thread_entries < 1) {
-            $max_thread_entries = AIResponseGeneratorConstants::MAX_THREAD_ENTRIES;
-        } else {
-            $max_thread_entries = intval($max_thread_entries);
-        }
-
         // Build messages array (same as generate method)
         $messages = array();
         $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
+        // Replace template variables in system prompt
+        $system = $this->replaceTemplateVars($system, $ticket, $thisstaff);
         $messages[] = array('role' => 'system', 'content' => $system);
 
         $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
@@ -95,14 +106,7 @@ class AIAjaxController extends AjaxController {
         $providerImageLimit = $this->getProviderImageLimit($provider);
 
         // Get max images from config
-        $maxImages = $cfg->get('max_images');
-        if ($maxImages === null || $maxImages === '' || !is_numeric($maxImages) || $maxImages < 0) {
-            $maxImages = AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES;
-        } else {
-            $maxImages = intval($maxImages);
-        }
-        // Respect provider limits
-        $maxImages = min($maxImages, $providerImageLimit);
+        $maxImages = min(intval($cfg->get('max_images')), $providerImageLimit);
 
         $thread = $ticket->getThread();
         if ($thread) {
@@ -212,15 +216,14 @@ class AIAjaxController extends AjaxController {
             // Apply response template if provided
             $tpl = trim((string)$cfg->get('response_template'));
             if ($tpl) {
-                global $thisstaff;
-                $tpl = $this->expandTemplate($tpl, $ticket, $fullResponse, $thisstaff);
-                $fullResponse = $tpl;
+                $fullResponse = $this->replaceTemplateVars($tpl, $ticket, $thisstaff, array('ai_text' => $fullResponse));
             }
 
             // Send final event with complete response
             $sendEvent('done', array('text' => $fullResponse));
 
         } catch (Throwable $t) {
+            $this->logError($t->getMessage());
             $sendEvent('error', array('message' => $t->getMessage()));
         }
     }
@@ -233,6 +236,7 @@ class AIAjaxController extends AjaxController {
     function generate() {
         global $thisstaff;
         $this->staffOnly();
+        $this->validateCSRF();
 
         $ticket_id = (int) ($_POST['ticket_id'] ?? $_GET['ticket_id'] ?? 0);
         if (!$ticket_id || !($ticket = Ticket::lookup($ticket_id)))
@@ -257,51 +261,26 @@ class AIAjaxController extends AjaxController {
         if (!$cfg)
             Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
 
-
-    $api_url = rtrim($cfg->get('api_url'), '/');
-    $api_key = $cfg->get('api_key');
-    $model   = $cfg->get('model');
-    $max_tokens_param = trim((string)$cfg->get('max_tokens_param')) ?: 'max_tokens';
-
-    $temperature = $cfg->get('temperature');
-    if ($temperature === null || $temperature === '' || !is_numeric($temperature)) {
-        $temperature = AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
-    } else {
-        $temperature = floatval($temperature);
-    }
-
-    // Read max_tokens from config, default if not set or invalid
-    $max_tokens = $cfg->get('max_tokens');
-    if ($max_tokens === null || $max_tokens === '' || !is_numeric($max_tokens) || $max_tokens < 1) {
-        $max_tokens = AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
-    } else {
-        $max_tokens = intval($max_tokens);
-    }
-
-    // Read timeout from config, default if not set or invalid
-    $timeout = $cfg->get('timeout');
-    if ($timeout === null || $timeout === '' || !is_numeric($timeout) || $timeout < 1) {
-        $timeout = AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
-    } else {
-        $timeout = intval($timeout);
-    }
+        // Get configuration values (defaults are handled by PluginConfig)
+        $api_url          = rtrim($cfg->get('api_url'), '/');
+        $api_key          = $cfg->get('api_key');
+        $model            = $cfg->get('model');
+        $max_tokens_param = $cfg->get('max_tokens_param');
+        $temperature      = floatval($cfg->get('temperature'));
+        $max_tokens       = intval($cfg->get('max_tokens'));
+        $timeout          = intval($cfg->get('timeout'));
+        $max_thread_entries = intval($cfg->get('max_thread_entries'));
 
         if (!$api_url || !$model)
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
-
-        // Read max_thread_entries from config, default if not set or invalid
-        $max_thread_entries = $cfg->get('max_thread_entries');
-        if ($max_thread_entries === null || $max_thread_entries === '' || !is_numeric($max_thread_entries) || $max_thread_entries < 1) {
-            $max_thread_entries = AIResponseGeneratorConstants::MAX_THREAD_ENTRIES;
-        } else {
-            $max_thread_entries = intval($max_thread_entries);
-        }
 
         // Build messages array starting with system prompt
         $messages = array();
 
         // Append instruction for the model (from config or default)
         $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
+        // Replace template variables in system prompt
+        $system = $this->replaceTemplateVars($system, $ticket, $thisstaff);
         $messages[] = array('role' => 'system', 'content' => $system);
 
         // Add extra instructions as system message (meta-instruction for the AI)
@@ -316,14 +295,7 @@ class AIAjaxController extends AjaxController {
         $providerImageLimit = $this->getProviderImageLimit($provider);
 
         // Get max images from config
-        $maxImages = $cfg->get('max_images');
-        if ($maxImages === null || $maxImages === '' || !is_numeric($maxImages) || $maxImages < 0) {
-            $maxImages = AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES;
-        } else {
-            $maxImages = intval($maxImages);
-        }
-        // Respect provider limits
-        $maxImages = min($maxImages, $providerImageLimit);
+        $maxImages = min(intval($cfg->get('max_images')), $providerImageLimit);
 
         // Build thread context using latest thread entries
         $thread = $ticket->getThread();
@@ -406,43 +378,50 @@ class AIAjaxController extends AjaxController {
             // Apply response template if provided
             $tpl = trim((string)$cfg->get('response_template'));
             if ($tpl) {
-                global $thisstaff;
-                $tpl = $this->expandTemplate($tpl, $ticket, $reply, $thisstaff);
-                $reply = $tpl;
+                $reply = $this->replaceTemplateVars($tpl, $ticket, $thisstaff, array('ai_text' => $reply));
             }
 
             return $this->encode(array('ok' => true, 'text' => $reply));
         }
         catch (Throwable $t) {
+            $this->logError($t->getMessage());
             return $this->encode(array('ok' => false, 'error' => $t->getMessage()));
         }
     }
 
     /**
-     * Expands template with ticket and AI response data
+     * Replaces template variables using osTicket's native VariableReplacer
      *
-     * @param string $template Template string with placeholders
+     * Supports all osTicket template variables like %{ticket.number}, %{ticket.user.name}, etc.
+     * Also supports custom variables: %{date}, %{time}, %{datetime}, %{day}, %{ai_text}
+     *
+     * @param string $template Template string with %{...} placeholders
      * @param Ticket $ticket Ticket instance
-     * @param string $aiText Generated AI response text
      * @param Staff|null $staff Staff member (agent) instance
+     * @param array $extraVars Additional variables to replace (e.g., ['ai_text' => $response])
      * @return string Expanded template with replaced placeholders
      */
-    private function expandTemplate($template, Ticket $ticket, $aiText, $staff=null) {
-        $user = $ticket->getOwner();
-        $agentName = '';
-        if ($staff && is_object($staff)) {
-            // Prefer display name, fallback to name
-            $agentName = method_exists($staff, 'getName') ? (string)$staff->getName() : '';
-        }
-        $replacements = array(
-            '{ai_text}' => (string)$aiText,
-            '{ticket_number}' => (string)$ticket->getNumber(),
-            '{ticket_subject}' => (string)$ticket->getSubject(),
-            '{user_name}' => $user ? (string)$user->getName() : '',
-            '{user_email}' => $user ? (string)$user->getEmail() : '',
-            '{agent_name}' => $agentName,
+    private function replaceTemplateVars($template, Ticket $ticket, $staff=null, $extraVars=array()) {
+        global $ost;
+
+        // Add date/time variables
+        $now = new DateTime();
+
+        // Build context - all variables passed to osTicket's VariableReplacer
+        $vars = array(
+            'ticket'   => $ticket,
+            'staff'    => $staff,
+            'date'     => $now->format('Y-m-d'),
+            'time'     => $now->format('H:i'),
+            'datetime' => $now->format('Y-m-d H:i'),
+            'day'      => $now->format('l'),
         );
-        return strtr($template, $replacements);
+
+        // Merge any extra vars (like ai_text)
+        $vars = array_merge($vars, $extraVars);
+
+        // Use osTicket's native template variable replacement
+        return $ost->replaceTemplateVariables($template, $vars);
     }
 
     /**

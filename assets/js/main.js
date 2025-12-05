@@ -422,6 +422,12 @@
       requestData.extra_instructions = extraInstructions;
     }
 
+    // Add CSRF token (osTicket uses __CSRFToken__ field)
+    var csrfToken = $('input[name="__CSRFToken__"]').val() || '';
+    if (csrfToken) {
+      requestData.__CSRFToken__ = csrfToken;
+    }
+
     var jq = $.ajax({
       url: url,
       method: 'POST',

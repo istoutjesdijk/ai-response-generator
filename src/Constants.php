@@ -15,6 +15,9 @@ class AIResponseGeneratorConstants {
     const MAX_THREAD_ENTRIES = 20;
     const MAX_EXTRA_INSTRUCTIONS_LENGTH = 500;
 
+    // Default system prompt
+    const DEFAULT_SYSTEM_PROMPT = 'You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.';
+
     // Vision support defaults
     const DEFAULT_MAX_IMAGES = 5;
     const DEFAULT_MAX_IMAGE_SIZE_MB = 5;

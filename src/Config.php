@@ -122,6 +122,14 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'configuration' => array('size' => 10, 'length' => 10),
         ));
 
+        $fields['include_internal_notes'] = new BooleanField(array(
+            'label' => __('Include Internal Notes'),
+            'default' => true,
+            'configuration' => array(
+                'desc' => __('Include internal notes in AI context. Disable to keep notes private.')
+            )
+        ));
+
         $fields['show_instructions_popup'] = new BooleanField(array(
             'label' => __('Show Instructions Popup'),
             'default' => true,

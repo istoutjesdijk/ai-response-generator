@@ -229,4 +229,39 @@ class AIResponseGeneratorPlugin extends Plugin {
         $dispatcher->append(url_post('^/ai/response$', array('AIAjaxController', 'generate')));
         $dispatcher->append(url_post('^/ai/response/stream$', array('AIAjaxController', 'generateStreaming')));
     }
+
+    /**
+     * Provides "Duplicate" options in the Add New Instance dropdown
+     *
+     * @return array|false Array of instance options or false if none
+     */
+    public function getNewInstanceOptions() {
+        $options = array();
+        foreach ($this->getInstances() as $i) {
+            $options[] = array(
+                'name' => sprintf(__('Duplicate "%s"'), $i->getName()),
+                'href' => sprintf('plugins.php?id=%d&a=add-instance&from=%d',
+                    $this->getId(), $i->getId()),
+                'icon' => 'icon-copy',
+            );
+        }
+        return $options ?: false;
+    }
+
+    /**
+     * Returns default config values when duplicating an instance
+     *
+     * @param array $options GET parameters including 'from' instance ID
+     * @return array Configuration values to pre-fill
+     */
+    public function getNewInstanceDefaults($options) {
+        if (!empty($options['from'])) {
+            if ($instance = $this->getInstance((int)$options['from'])) {
+                $config = $instance->getConfiguration();
+                unset($config['name']); // Force user to enter new name
+                return $config;
+            }
+        }
+        return array();
+    }
 }

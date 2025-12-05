@@ -90,7 +90,7 @@ class AIAjaxController extends AjaxController {
 
         // Build messages array (same as generate method)
         $messages = array();
-        $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
+        $system = trim((string)$cfg->get('system_prompt')) ?: AIResponseGeneratorConstants::DEFAULT_SYSTEM_PROMPT;
         // Replace template variables in system prompt
         $system = $this->replaceTemplateVars($system, $ticket, $thisstaff);
         $messages[] = array('role' => 'system', 'content' => $system);
@@ -106,6 +106,7 @@ class AIAjaxController extends AjaxController {
 
         // Check if vision support is enabled
         $visionEnabled = (bool)$cfg->get('enable_vision');
+        $includeInternalNotes = (bool)$cfg->get('include_internal_notes');
         $provider = $this->detectProvider($api_url, $model);
         $providerImageLimit = $this->getProviderImageLimit($provider);
 
@@ -126,6 +127,12 @@ class AIAjaxController extends AjaxController {
 
             foreach ($entryList as $E) {
                 $type = $E->getType();
+
+                // Skip internal notes if configured to exclude them
+                if ($type === 'N' && !$includeInternalNotes) {
+                    continue;
+                }
+
                 $body = ThreadEntryBody::clean($E->getBody());
                 $who  = $E->getPoster();
                 $who  = is_object($who) ? $who->getName() : 'User';
@@ -173,11 +180,6 @@ class AIAjaxController extends AjaxController {
                     $messages[] = array('role' => $role, 'content' => $textContent);
                 }
             }
-        }
-
-        // Validation
-        if (stripos($model, 'gpt-5-nano') !== false && $temperature != 1) {
-            Http::response(400, $this->encode(array('ok' => false, 'error' => __('This model only supports temperature=1.'))));
         }
 
         // All validations passed - NOW set SSE headers
@@ -282,7 +284,7 @@ class AIAjaxController extends AjaxController {
         $messages = array();
 
         // Append instruction for the model (from config or default)
-        $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
+        $system = trim((string)$cfg->get('system_prompt')) ?: AIResponseGeneratorConstants::DEFAULT_SYSTEM_PROMPT;
         // Replace template variables in system prompt
         $system = $this->replaceTemplateVars($system, $ticket, $thisstaff);
         $messages[] = array('role' => 'system', 'content' => $system);
@@ -299,6 +301,7 @@ class AIAjaxController extends AjaxController {
 
         // Check if vision support is enabled
         $visionEnabled = (bool)$cfg->get('enable_vision');
+        $includeInternalNotes = (bool)$cfg->get('include_internal_notes');
         $provider = $this->detectProvider($api_url, $model);
         $providerImageLimit = $this->getProviderImageLimit($provider);
 
@@ -320,6 +323,12 @@ class AIAjaxController extends AjaxController {
 
             foreach ($entryList as $E) {
                 $type = $E->getType();
+
+                // Skip internal notes if configured to exclude them
+                if ($type === 'N' && !$includeInternalNotes) {
+                    continue;
+                }
+
                 $body = ThreadEntryBody::clean($E->getBody());
                 $who  = $E->getPoster();
                 $who  = is_object($who) ? $who->getName() : 'User';
@@ -370,10 +379,6 @@ class AIAjaxController extends AjaxController {
         }
 
         try {
-            // Validation: some models only support temperature=1
-            if (stripos($model, 'gpt-5-nano') !== false && $temperature != 1) {
-                throw new Exception(__('This model only supports temperature=1.'));
-            }
             $client = new AIClient($api_url, $api_key);
             // Let the client auto-detect the provider
             $provider = 'auto';

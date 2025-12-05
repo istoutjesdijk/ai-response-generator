@@ -73,18 +73,18 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
         $fields['system_prompt'] = new TextareaField(array(
             'label' => __('AI System Prompt'),
             'required' => false,
-            'hint' => __('Optional system instruction sent to the model to steer tone, structure, and policy.'),
+            'hint' => __('System instruction for the AI. Supports variables: {ticket_number}, {ticket_subject}, {ticket_status}, {ticket_priority}, {ticket_department}, {ticket_source}, {ticket_created}, {user_name}, {user_email}, {agent_name}, {date}, {time}, {datetime}, {day}'),
             'configuration' => array(
                 'rows' => 6,
                 'html' => false,
-                'placeholder' => __('You are a helpful support agent. Draft a concise, professional reply...'),
+                'placeholder' => __('You are a helpful support agent for {ticket_department}. The current date is {date}. Draft a concise, professional reply...'),
             ),
         ));
 
         $fields['response_template'] = new TextareaField(array(
             'label' => __('Response Template'),
             'required' => false,
-            'hint' => __('Optional template applied to the AI result. Use {ai_text} to insert the generated text. Supported tokens: {ticket_number}, {ticket_subject}, {user_name}, {user_email}, {agent_name}.'),
+            'hint' => __('Template applied to the AI result. Use {ai_text} for the generated text. Same variables as system prompt plus {ai_text}.'),
             'configuration' => array(
                 'rows' => 6,
                 'html' => false,

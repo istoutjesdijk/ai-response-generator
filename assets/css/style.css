@@ -4,16 +4,22 @@
 .ai-loading {
   opacity: 0.7;
   pointer-events: none;
+}
+
+/* Hide icon but preserve space during loading */
+.ai-loading i,
+.ai-loading .icon-magic {
+  visibility: hidden !important;
+}
+
+/* Position spinner over the hidden icon */
+.ai-loading i,
+.ai-loading .icon-magic {
   position: relative;
 }
 
-/* Verberg het icon tijdens loading en verwijder ruimte */
-.ai-loading i,
-.ai-loading .icon-magic {
-  display: none !important;
-}
-
-.ai-loading:after {
+.ai-loading i:after,
+.ai-loading .icon-magic:after {
   content: '';
   position: absolute;
   left: 50%;
@@ -26,6 +32,7 @@
   border-top-color: transparent;
   border-radius: 50%;
   animation: ai-spin 0.7s linear infinite;
+  visibility: visible;
 }
 
 @keyframes ai-spin {

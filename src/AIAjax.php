@@ -80,8 +80,11 @@ class AIAjaxController extends AjaxController {
         }
 
         // Build messages array (same as generate method)
+        global $thisstaff;
         $messages = array();
         $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
+        // Expand template variables in system prompt
+        $system = $this->expandSystemPrompt($system, $ticket, $thisstaff);
         $messages[] = array('role' => 'system', 'content' => $system);
 
         $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
@@ -302,6 +305,8 @@ class AIAjaxController extends AjaxController {
 
         // Append instruction for the model (from config or default)
         $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
+        // Expand template variables in system prompt
+        $system = $this->expandSystemPrompt($system, $ticket, $thisstaff);
         $messages[] = array('role' => 'system', 'content' => $system);
 
         // Add extra instructions as system message (meta-instruction for the AI)
@@ -419,7 +424,68 @@ class AIAjaxController extends AjaxController {
     }
 
     /**
-     * Expands template with ticket and AI response data
+     * Builds array of template variable replacements from ticket context
+     *
+     * @param Ticket $ticket Ticket instance
+     * @param Staff|null $staff Staff member (agent) instance
+     * @return array Associative array of placeholder => value replacements
+     */
+    private function buildTemplateReplacements(Ticket $ticket, $staff=null) {
+        $user = $ticket->getOwner();
+        $dept = $ticket->getDept();
+        $status = $ticket->getStatus();
+        $priority = $ticket->getPriority();
+
+        // Agent name
+        $agentName = '';
+        if ($staff && is_object($staff)) {
+            $agentName = method_exists($staff, 'getName') ? (string)$staff->getName() : '';
+        }
+
+        // Date/time formatting
+        $now = new DateTime();
+        $createDate = $ticket->getCreateDate();
+
+        return array(
+            // Ticket info
+            '{ticket_number}' => (string)$ticket->getNumber(),
+            '{ticket_subject}' => (string)$ticket->getSubject(),
+            '{ticket_status}' => $status ? (string)$status->getName() : '',
+            '{ticket_priority}' => $priority ? (string)$priority->getDesc() : '',
+            '{ticket_department}' => $dept ? (string)$dept->getName() : '',
+            '{ticket_source}' => (string)$ticket->getSource(),
+            '{ticket_created}' => $createDate ? date('Y-m-d H:i', strtotime($createDate)) : '',
+
+            // Customer/user info
+            '{user_name}' => $user ? (string)$user->getName() : '',
+            '{user_email}' => $user ? (string)$user->getEmail() : '',
+
+            // Agent info
+            '{agent_name}' => $agentName,
+
+            // Current date/time
+            '{date}' => $now->format('Y-m-d'),
+            '{time}' => $now->format('H:i'),
+            '{datetime}' => $now->format('Y-m-d H:i'),
+            '{day}' => $now->format('l'),
+        );
+    }
+
+    /**
+     * Expands system prompt template with ticket context variables
+     *
+     * @param string $template Template string with placeholders
+     * @param Ticket $ticket Ticket instance
+     * @param Staff|null $staff Staff member (agent) instance
+     * @return string Expanded template with replaced placeholders
+     */
+    private function expandSystemPrompt($template, Ticket $ticket, $staff=null) {
+        $replacements = $this->buildTemplateReplacements($ticket, $staff);
+        return strtr($template, $replacements);
+    }
+
+    /**
+     * Expands response template with ticket and AI response data
      *
      * @param string $template Template string with placeholders
      * @param Ticket $ticket Ticket instance
@@ -428,20 +494,8 @@ class AIAjaxController extends AjaxController {
      * @return string Expanded template with replaced placeholders
      */
     private function expandTemplate($template, Ticket $ticket, $aiText, $staff=null) {
-        $user = $ticket->getOwner();
-        $agentName = '';
-        if ($staff && is_object($staff)) {
-            // Prefer display name, fallback to name
-            $agentName = method_exists($staff, 'getName') ? (string)$staff->getName() : '';
-        }
-        $replacements = array(
-            '{ai_text}' => (string)$aiText,
-            '{ticket_number}' => (string)$ticket->getNumber(),
-            '{ticket_subject}' => (string)$ticket->getSubject(),
-            '{user_name}' => $user ? (string)$user->getName() : '',
-            '{user_email}' => $user ? (string)$user->getEmail() : '',
-            '{agent_name}' => $agentName,
-        );
+        $replacements = $this->buildTemplateReplacements($ticket, $staff);
+        $replacements['{ai_text}'] = (string)$aiText;
         return strtr($template, $replacements);
     }
 

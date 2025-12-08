@@ -89,7 +89,7 @@ class AIAjaxController extends AjaxController {
         $imagesEnabled = (bool)$cfg->get('enable_images');
         $filesEnabled = (bool)$cfg->get('enable_files');
         $includeInternalNotes = (bool)$cfg->get('include_internal_notes');
-        $provider = $this->detectProvider($cfg->get('api_url'), $cfg->get('model'));
+        $provider = AIClient::detectProvider($cfg->get('api_url'), $cfg->get('model'));
         $maxImages = min($C::getInt($cfg, 'max_images'), $this->getProviderImageLimit($provider));
         $maxFiles = $C::getInt($cfg, 'max_files');
         $max_thread_entries = $C::getInt($cfg, 'max_thread_entries');
@@ -109,8 +109,8 @@ class AIAjaxController extends AjaxController {
             if ($type === 'N' && !$includeInternalNotes) continue;
 
             $body = ThreadEntryBody::clean($E->getBody());
-            $who = $E->getPoster();
-            $who = is_object($who) ? $who->getName() : 'User';
+            $poster = $E->getPoster();
+            $who = $poster ? $poster->getName() : 'User';
             $role = ($type == 'M') ? 'user' : 'assistant';
 
             // Format content
@@ -383,19 +383,4 @@ class AIAjaxController extends AjaxController {
         return AIResponseGeneratorConstants::OPENAI_MAX_IMAGES;
     }
 
-    /**
-     * Detects the AI provider from URL and model name
-     *
-     * @param string $apiUrl API URL
-     * @param string $model Model name
-     * @return string Provider type ('openai' or 'anthropic')
-     */
-    private function detectProvider($apiUrl, $model) {
-        if (stripos($apiUrl, 'anthropic.com') !== false ||
-            stripos($model, 'claude') === 0 ||
-            preg_match('#/v1/messages$#', $apiUrl)) {
-            return 'anthropic';
-        }
-        return 'openai';
-    }
 }

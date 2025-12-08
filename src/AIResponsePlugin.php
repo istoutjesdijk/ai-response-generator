@@ -119,14 +119,6 @@ class AIResponseGeneratorPlugin extends Plugin {
     }
 
     /**
-     * Gets toolbar button data for JavaScript injection (wrapper for templates)
-     */
-    private function getToolbarButtonData($object) {
-        if (!$object || !method_exists($object, 'getId')) return array();
-        return $this->getInstanceButtonData($object);
-    }
-
-    /**
      * Checks if we're on a single ticket detail view (not a ticket list)
      *
      * @param object $object The object being viewed
@@ -170,7 +162,7 @@ class AIResponseGeneratorPlugin extends Plugin {
 
     // Inject prominent toolbar button for each enabled instance
     // IMPORTANT: Always refresh toolbar instances data on page load to fix pjax navigation issues
-    window.AIResponseGen.toolbarInstances = <?php echo json_encode($this->getToolbarButtonData($object)); ?>;
+    window.AIResponseGen.toolbarInstances = <?php echo json_encode($this->getInstanceButtonData($object)); ?>;
 
     (function() {
         function injectToolbarButtons() {

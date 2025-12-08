@@ -26,7 +26,9 @@ class AIClient {
         $timeout = $timeout ?? $C::DEFAULT_TIMEOUT;
         $anthropicVersion = $anthropicVersion ?? $C::DEFAULT_ANTHROPIC_VERSION;
 
-        $provider = $this->detectProvider($provider, $model);
+        if ($provider === 'auto') {
+            $provider = self::detectProvider($this->baseUrl, $model);
+        }
         $isStreaming = is_callable($streamCallback);
 
         if ($provider === 'anthropic') {
@@ -37,13 +39,15 @@ class AIClient {
 
     /**
      * Detect provider from URL and model name
+     *
+     * @param string $apiUrl API URL
+     * @param string $model Model name
+     * @return string Provider type ('openai' or 'anthropic')
      */
-    private function detectProvider($provider, $model) {
-        if ($provider !== 'auto') return $provider;
-
-        if (stripos($this->baseUrl, 'anthropic.com') !== false ||
+    public static function detectProvider($apiUrl, $model) {
+        if (stripos($apiUrl, 'anthropic.com') !== false ||
             stripos($model, 'claude') === 0 ||
-            preg_match('#/v1/messages$#', $this->baseUrl)) {
+            preg_match('#/v1/messages$#', $apiUrl)) {
             return 'anthropic';
         }
         return 'openai';
@@ -189,7 +193,7 @@ class AIClient {
         if ($provider === 'anthropic') {
             return $this->parseAnthropicResponse($json);
         }
-        return $this->parseOpenAIResponse($json, $resp);
+        return $this->parseOpenAIResponse($json);
     }
 
     /**
@@ -214,7 +218,7 @@ class AIClient {
     /**
      * Parse OpenAI Responses API response
      */
-    private function parseOpenAIResponse($json, $resp) {
+    private function parseOpenAIResponse($json) {
         // Responses API: output_text helper property
         if (isset($json['output_text']))
             return (string)$json['output_text'];

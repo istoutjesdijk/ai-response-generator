@@ -435,15 +435,8 @@
 
   // Helper function to get current ticket ID from URL
   function getCurrentTicketId() {
-    // Try to extract ticket ID from URL (?id=123)
     var match = window.location.search.match(/[?&]id=(\d+)/);
-    if (match) return parseInt(match[1], 10);
-
-    // Fallback: try to find ticket ID in the page
-    var $ticketId = $('input[name="id"]').first();
-    if ($ticketId.length) return parseInt($ticketId.val(), 10);
-
-    return 0;
+    return match ? parseInt(match[1], 10) : 0;
   }
 
   // Remove any previous namespaced handler and (re)bind once
@@ -453,13 +446,8 @@
     e.preventDefault();
     var $a = $(this);
 
-    // IMPORTANT: Always read ticket ID from current page URL, not from cached button data
-    // This fixes the issue where switching tickets via pjax would use the wrong ticket ID
-    var tid = getCurrentTicketId();
-    if (!tid) {
-      // Fallback to button data attribute only if URL parsing fails
-      tid = $a.data('ticket-id');
-    }
+    // Always read ticket ID from current page URL to handle pjax navigation correctly
+    var tid = getCurrentTicketId() || $a.data('ticket-id');
     if (!tid) return false;
 
     var iid = ($a.data('instance-id') || '').toString();

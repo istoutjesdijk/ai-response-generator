@@ -174,8 +174,21 @@
     });
   }
 
+  // Build request data with CSRF token
+  function buildRequestData(tid, iid, extraInstructions) {
+    var data = { ticket_id: tid, instance_id: iid };
+    if (extraInstructions) {
+      data.extra_instructions = extraInstructions;
+    }
+    var csrfToken = $('input[name="__CSRFToken__"]').val() ||
+                    $('meta[name="csrf_token"]').attr('content') || '';
+    if (csrfToken) {
+      data.__CSRFToken__ = csrfToken;
+    }
+    return data;
+  }
+
   function showStreamingOverlay() {
-    // Create streaming overlay
     var overlayHtml =
       '<div class="ai-streaming-overlay">' +
         '<div class="ai-streaming-modal">' +
@@ -211,31 +224,9 @@
     var key = tid + ':' + iid;
     setLoading($a, true);
 
-    // Buffer to accumulate all chunks
     var streamBuffer = '';
-    var streamingUI = null;
-
-    // Prepare request data
-    var requestData = { ticket_id: tid, instance_id: iid };
-    if (extraInstructions) {
-      requestData.extra_instructions = extraInstructions;
-    }
-
-    // Get CSRF token (osTicket uses __CSRFToken__ field)
-    // Try multiple common locations
-    var csrfToken = $('input[name="__CSRFToken__"]').val() ||
-                    $('meta[name="csrf_token"]').attr('content') ||
-                    '';
-
-    // Debug: log if CSRF token was found
-    if (!csrfToken) {
-      console.warn('AI Response: CSRF token not found, request may fail');
-    }
-
-    // Add CSRF token to request data if found
-    if (csrfToken) {
-      requestData.__CSRFToken__ = csrfToken;
-    }
+    var streamingUI = showStreamingOverlay();
+    var requestData = buildRequestData(tid, iid, extraInstructions);
 
     // Convert to URLSearchParams for fetch
     var formData = new URLSearchParams();
@@ -243,14 +234,8 @@
       formData.append(k, requestData[k]);
     }
 
-    // Use fetch with streaming - use same base endpoint as normal requests
     var baseUrl = (window.AIResponseGen && window.AIResponseGen.ajaxEndpoint) || 'ajax.php/ai/response';
     var streamUrl = baseUrl.replace(/\/response$/, '/response/stream');
-
-    console.log('AI Response: Starting streaming request to:', streamUrl);
-
-    // Show streaming overlay
-    streamingUI = showStreamingOverlay();
 
     fetch(streamUrl, {
       method: 'POST',
@@ -413,28 +398,15 @@
 
   function generateAIResponse($a, tid, iid, extraInstructions) {
     var key = tid + ':' + iid;
-
     setLoading($a, true);
+
     var url = (window.AIResponseGen && window.AIResponseGen.ajaxEndpoint) || 'ajax.php/ai/response';
-
-    var requestData = { ticket_id: tid, instance_id: iid };
-    if (extraInstructions) {
-      requestData.extra_instructions = extraInstructions;
-    }
-
-    // Add CSRF token (osTicket uses __CSRFToken__ field)
-    var csrfToken = $('input[name="__CSRFToken__"]').val() || '';
-    if (csrfToken) {
-      requestData.__CSRFToken__ = csrfToken;
-    }
-
     var jq = $.ajax({
       url: url,
       method: 'POST',
-      data: requestData,
+      data: buildRequestData(tid, iid, extraInstructions),
       dataType: 'json'
     });
-    // mark as in-flight
     window.AIResponseGen.inflight[key] = jq;
 
     jq.done(function (resp) {

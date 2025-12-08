@@ -7,7 +7,7 @@
   position: relative;
 }
 
-/* Verberg het icon tijdens loading en verwijder ruimte */
+/* Hide icon during loading */
 .ai-loading i,
 .ai-loading .icon-magic {
   display: none !important;

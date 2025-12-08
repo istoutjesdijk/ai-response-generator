@@ -71,6 +71,9 @@ class AIResponseGeneratorPlugin extends Plugin {
                 if (!$thisstaff || !$thisstaff->isStaff()) return;
                 if (!$ticket || !method_exists($ticket, 'getId')) return;
 
+                // Only show on ticket detail view, not lists
+                if (!isset($_REQUEST['id']) && !isset($_REQUEST['number'])) return;
+
                 // Deduplicate: only render one button per instance per request
                 static $rendered = array();
                 $configs = self::getAllConfigs();
@@ -135,12 +138,31 @@ class AIResponseGeneratorPlugin extends Plugin {
     }
 
     /**
+     * Checks if we're on a single ticket detail view (not a ticket list)
+     *
+     * @param object $object The object being viewed
+     * @return bool True if on ticket detail page
+     */
+    private function isTicketDetailView($object) {
+        // Must be a Ticket object with valid ID
+        if (!$object || !($object instanceof Ticket) || !$object->getId())
+            return false;
+
+        // Must have ticket id or number in request (indicates detail view, not list)
+        return isset($_REQUEST['id']) || isset($_REQUEST['number']);
+    }
+
+    /**
      * Signal handler: Includes JS/CSS assets on ticket view pages
      *
      * @param object $object Viewed object (e.g., Ticket)
      * @param array $data View data passed by reference
      */
     function onObjectView($object, &$data) {
+    // Only show on ticket detail views, not ticket lists
+    if (!$this->isTicketDetailView($object))
+        return;
+
     // Prevent duplicate inclusion of CSS/JS assets
     static $assets_included = false;
     if (!$assets_included) {

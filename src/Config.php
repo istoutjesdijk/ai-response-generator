@@ -41,6 +41,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
         $fields['api_key'] = new PasswordField(array(
             'label' => __('API Key'),
             'required' => false,
+            'validator' => false,  // Disable password policy validation (API keys != user passwords)
             'hint' => __('API key used for Authorization header. Stored encrypted.'),
             'configuration' => array('size' => 80, 'length' => 255),
         ));

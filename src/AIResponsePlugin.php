@@ -66,39 +66,36 @@ class AIResponseGeneratorPlugin extends Plugin {
      * @param array $data Menu data passed by reference
      */
     function onTicketViewMore($ticket, &$data) {
-                // Only staff with reply permission should see the button
-                global $thisstaff;
-                if (!$thisstaff || !$thisstaff->isStaff()) return;
-                if (!$ticket || !method_exists($ticket, 'getId')) return;
+        global $thisstaff;
+        if (!$thisstaff || !$thisstaff->isStaff()) return;
+        if (!$ticket || !method_exists($ticket, 'getId')) return;
+        if (!isset($_REQUEST['id']) && !isset($_REQUEST['number'])) return;
 
-                // Only show on ticket detail view, not lists
-                if (!isset($_REQUEST['id']) && !isset($_REQUEST['number'])) return;
+        static $rendered = array();
+        $configs = self::getAllConfigs();
+        if (!$configs) return;
 
-                // Deduplicate: only render one button per instance per request
-                static $rendered = array();
-                $configs = self::getAllConfigs();
-                if (!$configs) return;
-                foreach ($configs as $iid => $cfg) {
-                        if (isset($rendered[$iid])) continue; // Already rendered for this instance
-                        $rendered[$iid] = true;
-                        $inst = $cfg->getInstance();
-                        $name = $inst ? $inst->getName() : ('Instance '.$iid);
-                        // BooleanField returns true/false or 1/0
-                        $showPopup = (bool)$cfg->get('show_instructions_popup');
-                        $enableStreaming = (bool)$cfg->get('enable_streaming');
-                        ?>
-                        <li>
-                            <a class="ai-generate-reply" href="#ai/generate"
-                                 data-ticket-id="<?php echo (int)$ticket->getId(); ?>"
-                                 data-instance-id="<?php echo (int)$iid; ?>"
-                                 data-show-popup="<?php echo $showPopup ? '1' : '0'; ?>"
-                                 data-enable-streaming="<?php echo $enableStreaming ? '1' : '0'; ?>">
-                                <i class="icon-magic"></i>
-                                <?php echo __('AI Response'); ?> — <?php echo Format::htmlchars($name); ?>
-                            </a>
-                        </li>
-                        <?php
-                }
+        foreach ($configs as $iid => $cfg) {
+            if (isset($rendered[$iid])) continue;
+            $rendered[$iid] = true;
+
+            $inst = $cfg->getInstance();
+            $name = $inst ? $inst->getName() : ('Instance '.$iid);
+            $showPopup = (bool)$cfg->get('show_instructions_popup');
+            $enableStreaming = (bool)$cfg->get('enable_streaming');
+            ?>
+            <li>
+                <a class="ai-generate-reply" href="#ai/generate"
+                   data-ticket-id="<?php echo (int)$ticket->getId(); ?>"
+                   data-instance-id="<?php echo (int)$iid; ?>"
+                   data-show-popup="<?php echo $showPopup ? '1' : '0'; ?>"
+                   data-enable-streaming="<?php echo $enableStreaming ? '1' : '0'; ?>">
+                    <i class="icon-magic"></i>
+                    <?php echo __('AI Response'); ?> — <?php echo Format::htmlchars($name); ?>
+                </a>
+            </li>
+            <?php
+        }
     }
 
     /**

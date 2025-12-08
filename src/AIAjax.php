@@ -13,8 +13,6 @@ class AIAjaxController extends AjaxController {
 
     /**
      * Validates CSRF token for POST requests
-     *
-     * @return void Returns error response if validation fails
      */
     private function validateCSRF() {
         global $ost;
@@ -30,25 +28,20 @@ class AIAjaxController extends AjaxController {
 
     /**
      * Logs an error message to osTicket's system log
-     *
-     * @param string $message Error message to log
-     * @param bool $alert Whether to send admin alert (default: false)
-     * @return void
      */
     private function logError($message, $alert = false) {
         global $ost;
-
         if ($ost) {
             $ost->logError('AI Response Generator', $message, $alert);
         }
     }
 
     /**
-     * Generates AI response with streaming for a ticket
+     * Validates request and returns ticket and config, or sends error response
      *
-     * @return void Streams SSE events directly to the client
+     * @return array [Ticket, PluginConfig, Staff]
      */
-    function generateStreaming() {
+    private function validateAndGetContext() {
         global $thisstaff;
         $this->staffOnly();
         $this->validateCSRF();
@@ -57,12 +50,11 @@ class AIAjaxController extends AjaxController {
         if (!$ticket_id || !($ticket = Ticket::lookup($ticket_id)))
             Http::response(404, $this->encode(array('ok' => false, 'error' => __('Unknown ticket'))));
 
-        // Permission check: must be able to reply
         $role = $ticket->getRole($thisstaff);
         if (!$role || !$role->hasPerm(Ticket::PERM_REPLY))
             Http::response(403, $this->encode(array('ok' => false, 'error' => __('Access denied'))));
 
-        // Load plugin config
+        // Load plugin config (support per-instance selection)
         $cfg = null;
         $iid = (int)($_POST['instance_id'] ?? $_GET['instance_id'] ?? 0);
         if ($iid) {
@@ -75,158 +67,149 @@ class AIAjaxController extends AjaxController {
         if (!$cfg)
             Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
 
-        // Shortcut for getting config values with defaults
-        $C = 'AIResponseGeneratorConstants';
+        return array($ticket, $cfg, $thisstaff);
+    }
 
-        // Get configuration values
-        $api_url            = rtrim($cfg->get('api_url'), '/');
-        $api_key            = $cfg->get('api_key');
-        $model              = $cfg->get('model');
-        $max_tokens_param   = $C::get($cfg, 'max_tokens_param');
-        $temperature        = $C::getFloat($cfg, 'temperature');
-        $max_tokens         = $C::getInt($cfg, 'max_tokens');
-        $timeout            = $C::getInt($cfg, 'timeout');
+    /**
+     * Builds messages array from ticket thread for AI context
+     *
+     * @param Ticket $ticket
+     * @param PluginConfig $cfg
+     * @param Staff $staff
+     * @return array Messages array for AI API
+     */
+    private function buildMessages($ticket, $cfg, $staff) {
+        $C = 'AIResponseGeneratorConstants';
+        $messages = array();
+
+        // System prompt
+        $system = trim((string)$cfg->get('system_prompt')) ?: $C::DEFAULT_SYSTEM_PROMPT;
+        $system = $this->replaceTemplateVars($system, $ticket, $staff);
+        $messages[] = array('role' => 'system', 'content' => $system);
+
+        // Extra instructions
+        $extra = trim((string)($_POST['extra_instructions'] ?? ''));
+        if (strlen($extra) > $C::MAX_EXTRA_INSTRUCTIONS_LENGTH) {
+            $extra = substr($extra, 0, $C::MAX_EXTRA_INSTRUCTIONS_LENGTH);
+        }
+        if ($extra) {
+            $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra);
+        }
+
+        // Thread entries
+        $visionEnabled = (bool)$cfg->get('enable_vision');
+        $includeInternalNotes = (bool)$cfg->get('include_internal_notes');
+        $provider = $this->detectProvider($cfg->get('api_url'), $cfg->get('model'));
+        $maxImages = min($C::getInt($cfg, 'max_images'), $this->getProviderImageLimit($provider));
         $max_thread_entries = $C::getInt($cfg, 'max_thread_entries');
+
+        $thread = $ticket->getThread();
+        if (!$thread) return $messages;
+
+        $entries = clone $thread->getEntries();
+        $entries->order_by('-created')->limit($max_thread_entries);
+        $entryList = array_reverse(iterator_to_array($entries));
+
+        $imageCount = 0;
+        foreach ($entryList as $E) {
+            $type = $E->getType();
+
+            if ($type === 'N' && !$includeInternalNotes) continue;
+
+            $body = ThreadEntryBody::clean($E->getBody());
+            $who = $E->getPoster();
+            $who = is_object($who) ? $who->getName() : 'User';
+            $role = ($type == 'M') ? 'user' : 'assistant';
+
+            // Format content
+            if ($type === 'N') {
+                $textContent = sprintf('[Internal Note - %s] %s', $who, $body);
+            } elseif ($type === 'M' && $who === 'User') {
+                $textContent = $body;
+            } else {
+                $textContent = sprintf('%s: %s', $who, $body);
+            }
+
+            // Process images if vision enabled
+            $images = ($visionEnabled && $maxImages > 0)
+                ? $this->processImageAttachments($E, $cfg, $imageCount, $maxImages)
+                : array();
+
+            if (!empty($images)) {
+                $content = array(array('type' => 'text', 'text' => $textContent));
+                foreach ($images as $img) {
+                    $content[] = array(
+                        'type' => 'image',
+                        'source' => array(
+                            'type' => 'base64',
+                            'media_type' => $img['type'],
+                            'data' => $img['data']
+                        )
+                    );
+                }
+                $messages[] = array('role' => $role, 'content' => $content);
+            } else {
+                $messages[] = array('role' => $role, 'content' => $textContent);
+            }
+        }
+
+        return $messages;
+    }
+
+    /**
+     * Generates AI response with streaming
+     */
+    function generateStreaming() {
+        list($ticket, $cfg, $staff) = $this->validateAndGetContext();
+
+        $C = 'AIResponseGeneratorConstants';
+        $api_url = rtrim($cfg->get('api_url'), '/');
+        $model = $cfg->get('model');
 
         if (!$api_url || !$model)
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
 
-        // Build messages array
-        $messages = array();
-        $system = trim((string)$cfg->get('system_prompt')) ?: $C::DEFAULT_SYSTEM_PROMPT;
-        $system = $this->replaceTemplateVars($system, $ticket, $thisstaff);
-        $messages[] = array('role' => 'system', 'content' => $system);
+        $messages = $this->buildMessages($ticket, $cfg, $staff);
 
-        // Add extra instructions if provided
-        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? ''));
-        if (strlen($extra_instructions) > $C::MAX_EXTRA_INSTRUCTIONS_LENGTH) {
-            $extra_instructions = substr($extra_instructions, 0, $C::MAX_EXTRA_INSTRUCTIONS_LENGTH);
-        }
-        if ($extra_instructions) {
-            $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra_instructions);
-        }
-
-        // Vision support settings
-        $visionEnabled = (bool)$cfg->get('enable_vision');
-        $includeInternalNotes = (bool)$cfg->get('include_internal_notes');
-        $provider = $this->detectProvider($api_url, $model);
-        $maxImages = min($C::getInt($cfg, 'max_images'), $this->getProviderImageLimit($provider));
-
-        $thread = $ticket->getThread();
-        if ($thread) {
-            // Use osTicket's QuerySet methods for efficient database query
-            // Clone to avoid modifying cached entries, order by most recent, limit to configured amount
-            $entries = clone $thread->getEntries();
-            $entries->order_by('-created')->limit($max_thread_entries);
-
-            // Reverse to get chronological order (oldest to newest)
-            $entryList = array_reverse(iterator_to_array($entries));
-
-            $imageCount = 0;
-
-            foreach ($entryList as $E) {
-                $type = $E->getType();
-
-                // Skip internal notes if configured to exclude them
-                if ($type === 'N' && !$includeInternalNotes) {
-                    continue;
-                }
-
-                $body = ThreadEntryBody::clean($E->getBody());
-                $who  = $E->getPoster();
-                $who  = is_object($who) ? $who->getName() : 'User';
-
-                // Map to role for AI context
-                $role = ($type == 'M') ? 'user' : 'assistant';
-
-                // Format content based on entry type
-                if ($type === 'N') {
-                    // Internal notes: always include name with prefix
-                    $textContent = sprintf('[Internal Note - %s] %s', $who, $body);
-                } elseif ($type === 'M' && $who === 'User') {
-                    // Customer message with fallback name: just the body (role says it's user)
-                    $textContent = $body;
-                } else {
-                    // Customer with real name or Agent response: include name
-                    $textContent = sprintf('%s: %s', $who, $body);
-                }
-
-                // Process images if vision is enabled
-                $images = array();
-                if ($visionEnabled && $maxImages > 0) {
-                    $images = $this->processImageAttachments($E, $cfg, $imageCount, $maxImages);
-                }
-
-                // If there are images, use content array format; otherwise use simple string
-                if (!empty($images)) {
-                    $content = array();
-                    // Add text first
-                    $content[] = array('type' => 'text', 'text' => $textContent);
-                    // Add images
-                    foreach ($images as $img) {
-                        $content[] = array(
-                            'type' => 'image',
-                            'source' => array(
-                                'type' => 'base64',
-                                'media_type' => $img['type'],
-                                'data' => $img['data']
-                            )
-                        );
-                    }
-                    $messages[] = array('role' => $role, 'content' => $content);
-                } else {
-                    // No images, use simple string format
-                    $messages[] = array('role' => $role, 'content' => $textContent);
-                }
-            }
-        }
-
-        // All validations passed - NOW set SSE headers
+        // Set SSE headers
         header('Content-Type: text/event-stream');
         header('Cache-Control: no-cache');
         header('Connection: keep-alive');
-        header('X-Accel-Buffering: no'); // Disable nginx buffering
+        header('X-Accel-Buffering: no');
 
-        // Disable output buffering
         while (ob_get_level()) ob_end_clean();
 
-        // Helper to send SSE event
         $sendEvent = function($event, $data) {
-            echo "event: {$event}\n";
-            echo "data: " . json_encode($data) . "\n\n";
-            // Ensure immediate output
+            echo "event: {$event}\ndata: " . json_encode($data) . "\n\n";
             if (ob_get_level()) ob_flush();
             flush();
-            // Force flush for some servers
-            if (function_exists('fastcgi_finish_request')) {
-                // Don't use this - it would close the connection
-                // fastcgi_finish_request();
-            }
         };
 
         try {
-            $client = new AIClient($api_url, $api_key);
-            $provider = 'auto';
-            $anthVersion = trim((string)$cfg->get('anthropic_version')) ?: AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION;
+            $client = new AIClient($api_url, $cfg->get('api_key'));
+            $anthVersion = $C::get($cfg, 'anthropic_version');
 
-            // Collect full response for template expansion
             $fullResponse = '';
+            $client->generateResponse(
+                $model, $messages,
+                $C::getFloat($cfg, 'temperature'),
+                $C::getInt($cfg, 'max_tokens'),
+                $C::get($cfg, 'max_tokens_param'),
+                $C::getInt($cfg, 'timeout'),
+                'auto', $anthVersion,
+                function($chunk) use ($sendEvent, &$fullResponse) {
+                    $fullResponse .= $chunk;
+                    $sendEvent('chunk', array('text' => $chunk));
+                }
+            );
 
-            // Stream response with callback
-            $client->generateResponse($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $provider, $anthVersion, function($chunk) use ($sendEvent, &$fullResponse) {
-                $fullResponse .= $chunk;
-                $sendEvent('chunk', array('text' => $chunk));
-            });
-
-            // Apply response template if provided
+            // Apply response template
             $tpl = trim((string)$cfg->get('response_template'));
             if ($tpl) {
-                $fullResponse = $this->replaceTemplateVars($tpl, $ticket, $thisstaff, array('ai_text' => $fullResponse));
+                $fullResponse = $this->replaceTemplateVars($tpl, $ticket, $staff, array('ai_text' => $fullResponse));
             }
 
-            // Send final event with complete response
             $sendEvent('done', array('text' => $fullResponse));
-
         } catch (Throwable $t) {
             $this->logError($t->getMessage());
             $sendEvent('error', array('message' => $t->getMessage()));
@@ -234,164 +217,43 @@ class AIAjaxController extends AjaxController {
     }
 
     /**
-     * Generates AI response for a ticket
-     *
-     * @return string JSON encoded response
+     * Generates AI response for a ticket (non-streaming)
      */
     function generate() {
-        global $thisstaff;
-        $this->staffOnly();
-        $this->validateCSRF();
+        list($ticket, $cfg, $staff) = $this->validateAndGetContext();
 
-        $ticket_id = (int) ($_POST['ticket_id'] ?? $_GET['ticket_id'] ?? 0);
-        if (!$ticket_id || !($ticket = Ticket::lookup($ticket_id)))
-            Http::response(404, $this->encode(array('ok' => false, 'error' => __('Unknown ticket'))));
-
-        // Permission check: must be able to reply
-        $role = $ticket->getRole($thisstaff);
-        if (!$role || !$role->hasPerm(Ticket::PERM_REPLY))
-            Http::response(403, $this->encode(array('ok' => false, 'error' => __('Access denied'))));
-
-        // Load plugin config from active instance
-        // Support per-instance selection via instance_id
-        $cfg = null;
-        $iid = (int)($_POST['instance_id'] ?? $_GET['instance_id'] ?? 0);
-        if ($iid) {
-            $all = AIResponseGeneratorPlugin::getAllConfigs();
-            if (isset($all[$iid]))
-                $cfg = $all[$iid];
-        }
-        if (!$cfg)
-            $cfg = AIResponseGeneratorPlugin::getActiveConfig();
-        if (!$cfg)
-            Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
-
-        // Shortcut for getting config values with defaults
         $C = 'AIResponseGeneratorConstants';
-
-        // Get configuration values
-        $api_url            = rtrim($cfg->get('api_url'), '/');
-        $api_key            = $cfg->get('api_key');
-        $model              = $cfg->get('model');
-        $max_tokens_param   = $C::get($cfg, 'max_tokens_param');
-        $temperature        = $C::getFloat($cfg, 'temperature');
-        $max_tokens         = $C::getInt($cfg, 'max_tokens');
-        $timeout            = $C::getInt($cfg, 'timeout');
-        $max_thread_entries = $C::getInt($cfg, 'max_thread_entries');
+        $api_url = rtrim($cfg->get('api_url'), '/');
+        $model = $cfg->get('model');
 
         if (!$api_url || !$model)
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
 
-        // Build messages array
-        $messages = array();
-        $system = trim((string)$cfg->get('system_prompt')) ?: $C::DEFAULT_SYSTEM_PROMPT;
-        $system = $this->replaceTemplateVars($system, $ticket, $thisstaff);
-        $messages[] = array('role' => 'system', 'content' => $system);
-
-        // Add extra instructions if provided
-        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? ''));
-        if (strlen($extra_instructions) > $C::MAX_EXTRA_INSTRUCTIONS_LENGTH) {
-            $extra_instructions = substr($extra_instructions, 0, $C::MAX_EXTRA_INSTRUCTIONS_LENGTH);
-        }
-        if ($extra_instructions) {
-            $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra_instructions);
-        }
-
-        // Vision support settings
-        $visionEnabled = (bool)$cfg->get('enable_vision');
-        $includeInternalNotes = (bool)$cfg->get('include_internal_notes');
-        $provider = $this->detectProvider($api_url, $model);
-        $maxImages = min($C::getInt($cfg, 'max_images'), $this->getProviderImageLimit($provider));
-
-        // Build thread context using latest thread entries
-        $thread = $ticket->getThread();
-        if ($thread) {
-            // Use osTicket's QuerySet methods for efficient database query
-            // Clone to avoid modifying cached entries, order by most recent, limit to configured amount
-            $entries = clone $thread->getEntries();
-            $entries->order_by('-created')->limit($max_thread_entries);
-
-            // Reverse to get chronological order (oldest to newest)
-            $entryList = array_reverse(iterator_to_array($entries));
-
-            $imageCount = 0;
-
-            foreach ($entryList as $E) {
-                $type = $E->getType();
-
-                // Skip internal notes if configured to exclude them
-                if ($type === 'N' && !$includeInternalNotes) {
-                    continue;
-                }
-
-                $body = ThreadEntryBody::clean($E->getBody());
-                $who  = $E->getPoster();
-                $who  = is_object($who) ? $who->getName() : 'User';
-
-                // Map to role for AI context
-                $role = ($type == 'M') ? 'user' : 'assistant';
-
-                // Format content based on entry type
-                if ($type === 'N') {
-                    // Internal notes: always include name with prefix
-                    $textContent = sprintf('[Internal Note - %s] %s', $who, $body);
-                } elseif ($type === 'M' && $who === 'User') {
-                    // Customer message with fallback name: just the body (role says it's user)
-                    $textContent = $body;
-                } else {
-                    // Customer with real name or Agent response: include name
-                    $textContent = sprintf('%s: %s', $who, $body);
-                }
-
-                // Process images if vision is enabled
-                $images = array();
-                if ($visionEnabled && $maxImages > 0) {
-                    $images = $this->processImageAttachments($E, $cfg, $imageCount, $maxImages);
-                }
-
-                // If there are images, use content array format; otherwise use simple string
-                if (!empty($images)) {
-                    $content = array();
-                    // Add text first
-                    $content[] = array('type' => 'text', 'text' => $textContent);
-                    // Add images
-                    foreach ($images as $img) {
-                        $content[] = array(
-                            'type' => 'image',
-                            'source' => array(
-                                'type' => 'base64',
-                                'media_type' => $img['type'],
-                                'data' => $img['data']
-                            )
-                        );
-                    }
-                    $messages[] = array('role' => $role, 'content' => $content);
-                } else {
-                    // No images, use simple string format
-                    $messages[] = array('role' => $role, 'content' => $textContent);
-                }
-            }
-        }
+        $messages = $this->buildMessages($ticket, $cfg, $staff);
 
         try {
-            $client = new AIClient($api_url, $api_key);
-            // Let the client auto-detect the provider
-            $provider = 'auto';
-            $anthVersion = trim((string)$cfg->get('anthropic_version')) ?: AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION;
-            // Pass the configurable timeout and provider info to the client
-            $reply = $client->generateResponse($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $provider, $anthVersion);
+            $client = new AIClient($api_url, $cfg->get('api_key'));
+            $reply = $client->generateResponse(
+                $model, $messages,
+                $C::getFloat($cfg, 'temperature'),
+                $C::getInt($cfg, 'max_tokens'),
+                $C::get($cfg, 'max_tokens_param'),
+                $C::getInt($cfg, 'timeout'),
+                'auto',
+                $C::get($cfg, 'anthropic_version')
+            );
+
             if (!$reply)
                 throw new Exception(__('Empty response from model'));
 
-            // Apply response template if provided
+            // Apply response template
             $tpl = trim((string)$cfg->get('response_template'));
             if ($tpl) {
-                $reply = $this->replaceTemplateVars($tpl, $ticket, $thisstaff, array('ai_text' => $reply));
+                $reply = $this->replaceTemplateVars($tpl, $ticket, $staff, array('ai_text' => $reply));
             }
 
             return $this->encode(array('ok' => true, 'text' => $reply));
-        }
-        catch (Throwable $t) {
+        } catch (Throwable $t) {
             $this->logError($t->getMessage());
             return $this->encode(array('ok' => false, 'error' => $t->getMessage()));
         }
@@ -444,20 +306,13 @@ class AIAjaxController extends AjaxController {
     private function processImageAttachments($entry, $cfg, &$imageCount, $maxImages) {
         $images = array();
 
-        // Check if we've reached the limit
         if ($imageCount >= $maxImages) {
             return $images;
         }
 
-        // Get configuration
+        $C = 'AIResponseGeneratorConstants';
         $includeInline = (bool)$cfg->get('include_inline_images');
-        $maxSizeMB = $cfg->get('max_image_size_mb');
-        if ($maxSizeMB === null || $maxSizeMB === '' || !is_numeric($maxSizeMB) || $maxSizeMB < 0) {
-            $maxSizeMB = AIResponseGeneratorConstants::DEFAULT_MAX_IMAGE_SIZE_MB;
-        } else {
-            $maxSizeMB = floatval($maxSizeMB);
-        }
-        $maxSizeBytes = $maxSizeMB * 1048576; // Convert MB to bytes
+        $maxSizeBytes = $C::getFloat($cfg, 'max_image_size_mb') * 1048576;
 
         // Get attachments from entry
         $attachments = $entry->getAttachments();

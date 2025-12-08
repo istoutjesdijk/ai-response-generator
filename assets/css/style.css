@@ -1,34 +1,9 @@
 /* AI Response Generator Styles - osTicket Compatible */
 
-/* Loading state */
+/* Loading state - uses osTicket's native icon-spinner icon-spin */
 .ai-loading {
   opacity: 0.7;
   pointer-events: none;
-}
-
-/* Hide icon but preserve space during loading */
-.ai-loading i,
-.ai-loading .icon-magic {
-  visibility: hidden !important;
-}
-
-/* Spinner positioned over the hidden icon */
-.ai-loading:after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 12px;
-  height: 12px;
-  border: 2px solid #0e76a8;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: ai-spin 0.7s linear infinite;
-}
-
-@keyframes ai-spin {
-  from { transform: translate(-50%, -50%) rotate(0deg); }
-  to { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
 /* Toast notifications - osTicket style */

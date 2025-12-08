@@ -67,10 +67,19 @@
   }
 
   function setLoading($a, loading) {
+    var $icon = $a.find('i').first();
     if (loading) {
       $a.addClass('ai-loading');
+      // Swap to osTicket's native spinner icon
+      $icon.data('original-class', $icon.attr('class'));
+      $icon.attr('class', 'icon-spinner icon-spin');
     } else {
       $a.removeClass('ai-loading');
+      // Restore original icon
+      var originalClass = $icon.data('original-class');
+      if (originalClass) {
+        $icon.attr('class', originalClass);
+      }
     }
   }
 

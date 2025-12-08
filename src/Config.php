@@ -34,7 +34,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
         $fields['api_url'] = new TextboxField(array(
             'label' => __('API URL'),
             'required' => true,
-            'hint' => __('Base URL to your API endpoint. Examples: OpenAI-compatible -> https://api.openai.com/v1/chat/completions, Anthropic -> https://api.anthropic.com/v1/messages'),
+            'hint' => __('Base URL to your API endpoint. Examples: OpenAI -> https://api.openai.com/v1/responses, Anthropic -> https://api.anthropic.com/v1/messages'),
             'configuration' => array('size' => 80, 'length' => 255),
         ));
 
@@ -65,7 +65,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'label' => __('Max Tokens Parameter Name'),
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS_PARAM,
-            'hint' => __('Parameter name for max tokens (e.g. max_tokens or max_completion_tokens).'),
+            'hint' => __('Parameter name for max tokens (e.g. max_output_tokens for Responses API, max_tokens for Anthropic).'),
             'configuration' => array('size' => 40, 'length' => 64),
         ));
 
@@ -147,11 +147,19 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             )
         ));
 
-        $fields['enable_vision'] = new BooleanField(array(
-            'label' => __('Enable Vision Support'),
+        $fields['enable_images'] = new BooleanField(array(
+            'label' => __('Enable Image Attachments'),
             'default' => false,
             'configuration' => array(
-                'desc' => __('Send image attachments to vision-capable AI models. Increases API costs.')
+                'desc' => __('Send image attachments (JPG, PNG, GIF, WebP) to vision-capable AI models.')
+            )
+        ));
+
+        $fields['enable_files'] = new BooleanField(array(
+            'label' => __('Enable File Attachments'),
+            'default' => false,
+            'configuration' => array(
+                'desc' => __('Send document attachments (PDF, TXT, CSV, etc.) to the AI model.')
             )
         ));
 
@@ -163,11 +171,19 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'configuration' => array('size' => 10, 'length' => 10),
         ));
 
-        $fields['max_image_size_mb'] = new TextboxField(array(
-            'label' => __('Max Image Size (MB)'),
+        $fields['max_files'] = new TextboxField(array(
+            'label' => __('Max Files per Request'),
+            'required' => false,
+            'default' => AIResponseGeneratorConstants::DEFAULT_MAX_FILES,
+            'hint' => __('Maximum document files per AI request.'),
+            'configuration' => array('size' => 10, 'length' => 10),
+        ));
+
+        $fields['max_attachment_size_mb'] = new TextboxField(array(
+            'label' => __('Max Attachment Size (MB)'),
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_MAX_IMAGE_SIZE_MB,
-            'hint' => __('Maximum size per image in megabytes. Larger images are skipped.'),
+            'hint' => __('Maximum size per attachment in megabytes. Larger files are skipped.'),
             'configuration' => array('size' => 10, 'length' => 10),
         ));
 

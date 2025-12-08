@@ -86,10 +86,12 @@ class AIAjaxController extends AjaxController {
         }
 
         // Thread entries
-        $visionEnabled = (bool)$cfg->get('enable_vision');
+        $imagesEnabled = (bool)$cfg->get('enable_images');
+        $filesEnabled = (bool)$cfg->get('enable_files');
         $includeInternalNotes = (bool)$cfg->get('include_internal_notes');
         $provider = $this->detectProvider($cfg->get('api_url'), $cfg->get('model'));
         $maxImages = min($C::getInt($cfg, 'max_images'), $this->getProviderImageLimit($provider));
+        $maxFiles = $C::getInt($cfg, 'max_files');
         $max_thread_entries = $C::getInt($cfg, 'max_thread_entries');
 
         $thread = $ticket->getThread();
@@ -100,6 +102,7 @@ class AIAjaxController extends AjaxController {
         $entryList = array_reverse(iterator_to_array($entries));
 
         $imageCount = 0;
+        $fileCount = 0;
         foreach ($entryList as $E) {
             $type = $E->getType();
 
@@ -119,22 +122,13 @@ class AIAjaxController extends AjaxController {
                 $textContent = sprintf('%s: %s', $who, $body);
             }
 
-            // Process images if vision enabled
-            $images = ($visionEnabled && $maxImages > 0)
-                ? $this->processImageAttachments($E, $cfg, $imageCount, $maxImages)
-                : array();
+            // Process attachments (images and/or files)
+            $attachments = $this->processAttachments($E, $cfg, $imagesEnabled, $filesEnabled, $imageCount, $maxImages, $fileCount, $maxFiles);
 
-            if (!empty($images)) {
+            if (!empty($attachments)) {
                 $content = array(array('type' => 'text', 'text' => $textContent));
-                foreach ($images as $img) {
-                    $content[] = array(
-                        'type' => 'image',
-                        'source' => array(
-                            'type' => 'base64',
-                            'media_type' => $img['type'],
-                            'data' => $img['data']
-                        )
-                    );
+                foreach ($attachments as $att) {
+                    $content[] = $att;
                 }
                 $messages[] = array('role' => $role, 'content' => $content);
             } else {
@@ -284,37 +278,35 @@ class AIAjaxController extends AjaxController {
     }
 
     /**
-     * Processes image attachments from a thread entry for vision-capable AI models
+     * Processes attachments from a thread entry (images and/or files)
      *
      * @param ThreadEntry $entry Thread entry to process attachments from
      * @param PluginConfig $cfg Plugin configuration
+     * @param bool $imagesEnabled Whether to process images
+     * @param bool $filesEnabled Whether to process files
      * @param int &$imageCount Current image count (modified by reference)
      * @param int $maxImages Maximum images allowed
-     * @return array Array of image data arrays with 'type', 'data', and 'name' keys
+     * @param int &$fileCount Current file count (modified by reference)
+     * @param int $maxFiles Maximum files allowed
+     * @return array Array of attachment data formatted for AI API
      */
-    private function processImageAttachments($entry, $cfg, &$imageCount, $maxImages) {
-        $images = array();
+    private function processAttachments($entry, $cfg, $imagesEnabled, $filesEnabled, &$imageCount, $maxImages, &$fileCount, $maxFiles) {
+        $result = array();
 
-        if ($imageCount >= $maxImages) {
-            return $images;
+        if (!$imagesEnabled && !$filesEnabled) {
+            return $result;
         }
 
         $C = 'AIResponseGeneratorConstants';
         $includeInline = (bool)$cfg->get('include_inline_images');
-        $maxSizeBytes = $C::getFloat($cfg, 'max_image_size_mb') * 1048576;
+        $maxSizeBytes = $C::getFloat($cfg, 'max_attachment_size_mb') * 1048576;
 
-        // Get attachments from entry
         $attachments = $entry->getAttachments();
         if (!$attachments) {
-            return $images;
+            return $result;
         }
 
         foreach ($attachments as $attachment) {
-            // Stop if we've reached the limit
-            if ($imageCount >= $maxImages) {
-                break;
-            }
-
             // Skip inline images if configured
             if ($attachment->inline && !$includeInline) {
                 continue;
@@ -325,42 +317,56 @@ class AIAjaxController extends AjaxController {
                 continue;
             }
 
-            // Check MIME type - only process images
             $mimeType = $file->getType();
-            if (!in_array($mimeType, AIResponseGeneratorConstants::SUPPORTED_IMAGE_TYPES)) {
-                continue;
-            }
+            $fileSize = $file->getSize();
 
             // Check file size
-            $fileSize = $file->getSize();
             if ($fileSize > $maxSizeBytes) {
-                continue; // Skip images that are too large
+                continue;
             }
 
-            // Get image data and encode to base64
-            try {
-                $imageData = $file->getData();
-                if (!$imageData) {
+            $isImage = in_array($mimeType, $C::SUPPORTED_IMAGE_TYPES);
+            $isFile = in_array($mimeType, $C::SUPPORTED_FILE_TYPES);
+
+            // Process images
+            if ($isImage && $imagesEnabled && $imageCount < $maxImages) {
+                try {
+                    $data = $file->getData();
+                    if (!$data) continue;
+
+                    $result[] = array(
+                        'type' => 'image',
+                        'source' => array(
+                            'type' => 'base64',
+                            'media_type' => $mimeType,
+                            'data' => base64_encode($data)
+                        )
+                    );
+                    $imageCount++;
+                } catch (Exception $e) {
                     continue;
                 }
+            }
+            // Process files
+            elseif ($isFile && $filesEnabled && $fileCount < $maxFiles) {
+                try {
+                    $data = $file->getData();
+                    if (!$data) continue;
 
-                $base64Data = base64_encode($imageData);
-
-                $images[] = array(
-                    'type' => $mimeType,
-                    'data' => $base64Data,
-                    'name' => $attachment->getFilename(),
-                    'size' => $fileSize
-                );
-
-                $imageCount++;
-            } catch (Exception $e) {
-                // Skip this attachment if there's an error reading it
-                continue;
+                    $result[] = array(
+                        'type' => 'file',
+                        'filename' => $attachment->getFilename(),
+                        'mime_type' => $mimeType,
+                        'data' => base64_encode($data)
+                    );
+                    $fileCount++;
+                } catch (Exception $e) {
+                    continue;
+                }
             }
         }
 
-        return $images;
+        return $result;
     }
 
     /**

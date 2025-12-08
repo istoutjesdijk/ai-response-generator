@@ -74,20 +74,25 @@ class AIClient {
     }
 
     /**
-     * Call OpenAI-compatible API
+     * Call OpenAI Responses API
      */
     private function callOpenAI($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $isStreaming, $streamCallback) {
         $url = $this->baseUrl;
-        if (!preg_match('#/chat/(?:completions|complete)$#', $url)) {
-            $url .= '/chat/completions';
+        if (!preg_match('#/responses$#', $url)) {
+            $url = preg_replace('#/chat/completions$#', '', $url);
+            $url = rtrim($url, '/') . '/responses';
         }
+
+        // Extract system messages as instructions and convert rest to input
+        list($instructions, $input) = $this->prepareResponsesApiPayload($messages);
 
         $payload = array(
             'model' => $model,
-            'messages' => $this->transformMessagesForOpenAI($messages),
+            'input' => $input,
             'temperature' => $temperature,
             $max_tokens_param => $max_tokens,
         );
+        if ($instructions !== '') $payload['instructions'] = $instructions;
         if ($isStreaming) $payload['stream'] = true;
 
         $headers = array('Content-Type: application/json');
@@ -137,11 +142,8 @@ class AIClient {
      */
     private function setupStreamingHandler($ch, $streamCallback, $provider) {
         $buffer = '';
-        $contentPath = $provider === 'anthropic'
-            ? array('delta', 'text')
-            : array('choices', 0, 'delta', 'content');
 
-        curl_setopt($ch, CURLOPT_WRITEFUNCTION, function($ch, $data) use (&$buffer, $streamCallback, $provider, $contentPath) {
+        curl_setopt($ch, CURLOPT_WRITEFUNCTION, function($ch, $data) use (&$buffer, $streamCallback, $provider) {
             $buffer .= $data;
             $lines = explode("\n", $buffer);
             $buffer = array_pop($lines);
@@ -156,14 +158,18 @@ class AIClient {
 
                     $chunk = JsonDataParser::decode($json_str, true);
 
-                    // Anthropic: check for content_block_delta type
                     if ($provider === 'anthropic') {
+                        // Anthropic: check for content_block_delta type
                         if (isset($chunk['type']) && $chunk['type'] === 'content_block_delta' && isset($chunk['delta']['text'])) {
                             call_user_func($streamCallback, $chunk['delta']['text']);
                         }
                     } else {
-                        // OpenAI format
-                        if (isset($chunk['choices'][0]['delta']['content'])) {
+                        // OpenAI Responses API: response.output_text.delta event
+                        if (isset($chunk['type']) && $chunk['type'] === 'response.output_text.delta' && isset($chunk['delta'])) {
+                            call_user_func($streamCallback, $chunk['delta']);
+                        }
+                        // Legacy Chat Completions format fallback
+                        elseif (isset($chunk['choices'][0]['delta']['content'])) {
                             call_user_func($streamCallback, $chunk['choices'][0]['delta']['content']);
                         }
                     }
@@ -211,15 +217,34 @@ class AIClient {
     }
 
     /**
-     * Parse OpenAI response
+     * Parse OpenAI Responses API response
      */
     private function parseOpenAIResponse($json, $resp) {
+        // Responses API: output_text helper property
+        if (isset($json['output_text']))
+            return (string)$json['output_text'];
+
+        // Responses API: output array with message content
+        if (isset($json['output']) && is_array($json['output'])) {
+            $parts = array();
+            foreach ($json['output'] as $item) {
+                if (($item['type'] ?? '') === 'message' && isset($item['content'])) {
+                    foreach ($item['content'] as $block) {
+                        if (($block['type'] ?? '') === 'output_text' && isset($block['text'])) {
+                            $parts[] = (string)$block['text'];
+                        }
+                    }
+                }
+            }
+            if ($parts) return trim(implode("\n", $parts));
+        }
+
+        // Legacy fallbacks for compatibility
         if (isset($json['choices'][0]['message']['content']))
             return (string)$json['choices'][0]['message']['content'];
         if (isset($json['choices'][0]['text']))
             return (string)$json['choices'][0]['text'];
-        if (isset($json['output']))
-            return (string)$json['output'];
+
         return is_string($resp) ? $resp : '';
     }
 
@@ -251,7 +276,9 @@ class AIClient {
             }
 
             if ($role === 'user' || $role === 'assistant') {
-                $claudeMsgs[] = array('role' => $role, 'content' => $content);
+                // Transform content to Anthropic format if it's an array
+                $anthropicContent = $this->formatContentForAnthropic($content);
+                $claudeMsgs[] = array('role' => $role, 'content' => $anthropicContent);
             }
         }
 
@@ -259,39 +286,164 @@ class AIClient {
     }
 
     /**
-     * Transform messages from internal format to OpenAI format
+     * Format content block for Anthropic API
+     *
+     * @param mixed $content String or array content
+     * @return mixed Formatted content for Anthropic
      */
-    private function transformMessagesForOpenAI($messages) {
-        $transformed = array();
+    private function formatContentForAnthropic($content) {
+        if (is_string($content)) {
+            return $content;
+        }
+
+        if (!is_array($content)) {
+            return $content;
+        }
+
+        $formatted = array();
+        foreach ($content as $block) {
+            $type = $block['type'] ?? '';
+
+            if ($type === 'text') {
+                $formatted[] = array(
+                    'type' => 'text',
+                    'text' => $block['text'] ?? ''
+                );
+            } elseif ($type === 'image' && isset($block['source'])) {
+                // Images: already in correct Anthropic format
+                $formatted[] = $block;
+            } elseif ($type === 'file' && isset($block['data'])) {
+                // Files: convert to Anthropic 'document' format
+                $mimeType = $block['mime_type'] ?? 'application/octet-stream';
+                $formatted[] = $this->formatDocumentForAnthropic($block['data'], $mimeType);
+            }
+        }
+
+        return $formatted ?: $content;
+    }
+
+    /**
+     * Format document for Anthropic API based on MIME type
+     * Text files use 'text' source type, binary files use 'base64'
+     *
+     * @param string $base64Data Base64 encoded file data
+     * @param string $mimeType MIME type of the file
+     * @return array Formatted document block
+     */
+    private function formatDocumentForAnthropic($base64Data, $mimeType) {
+        // Text-based files should be sent as plain text
+        $textMimeTypes = array(
+            'text/plain',
+            'text/csv',
+            'text/html',
+            'text/markdown',
+            'application/json',
+            'application/xml',
+            'text/xml',
+        );
+
+        if (in_array($mimeType, $textMimeTypes)) {
+            // Decode base64 to plain text for text-based files
+            $plainText = base64_decode($base64Data);
+            return array(
+                'type' => 'document',
+                'source' => array(
+                    'type' => 'text',
+                    'media_type' => 'text/plain',
+                    'data' => $plainText
+                )
+            );
+        }
+
+        // Binary files (PDF, etc.) use base64 encoding
+        return array(
+            'type' => 'document',
+            'source' => array(
+                'type' => 'base64',
+                'media_type' => $mimeType,
+                'data' => $base64Data
+            )
+        );
+    }
+
+    /**
+     * Prepare payload for OpenAI Responses API
+     * Extracts system messages as instructions and formats conversation as input
+     *
+     * @param array $messages Internal message format
+     * @return array [instructions, input]
+     */
+    private function prepareResponsesApiPayload($messages) {
+        $systemParts = array();
+        $inputMessages = array();
 
         foreach ($messages as $msg) {
             $role = $msg['role'] ?? 'user';
             $content = $msg['content'];
 
-            if (is_string($content)) {
-                $transformed[] = array('role' => $role, 'content' => $content);
+            // System messages become instructions
+            if ($role === 'system') {
+                if (is_string($content) && strlen(trim($content))) {
+                    $systemParts[] = trim($content);
+                }
                 continue;
             }
 
-            if (is_array($content)) {
-                $openaiContent = array();
-                foreach ($content as $block) {
-                    $type = $block['type'] ?? '';
-                    if ($type === 'text') {
-                        $openaiContent[] = array('type' => 'text', 'text' => $block['text'] ?? '');
-                    } elseif ($type === 'image' && isset($block['source'])) {
-                        $mediaType = $block['source']['media_type'] ?? 'image/jpeg';
-                        $base64Data = $block['source']['data'] ?? '';
-                        $openaiContent[] = array(
-                            'type' => 'image_url',
-                            'image_url' => array('url' => "data:{$mediaType};base64,{$base64Data}")
-                        );
-                    }
-                }
-                $transformed[] = array('role' => $role, 'content' => $openaiContent);
+            // Convert content to Responses API format
+            $inputContent = $this->formatContentForResponsesApi($content);
+
+            if ($inputContent !== null) {
+                $inputMessages[] = array(
+                    'role' => $role,
+                    'content' => $inputContent
+                );
             }
         }
 
-        return $transformed;
+        $instructions = trim(implode("\n\n", $systemParts));
+        return array($instructions, $inputMessages);
+    }
+
+    /**
+     * Format content block for Responses API
+     *
+     * @param mixed $content String or array content
+     * @return mixed Formatted content for Responses API
+     */
+    private function formatContentForResponsesApi($content) {
+        if (is_string($content)) {
+            return $content;
+        }
+
+        if (!is_array($content)) {
+            return null;
+        }
+
+        $formatted = array();
+        foreach ($content as $block) {
+            $type = $block['type'] ?? '';
+
+            if ($type === 'text') {
+                $formatted[] = array(
+                    'type' => 'input_text',
+                    'text' => $block['text'] ?? ''
+                );
+            } elseif ($type === 'image' && isset($block['source'])) {
+                $mediaType = $block['source']['media_type'] ?? 'image/jpeg';
+                $base64Data = $block['source']['data'] ?? '';
+                $formatted[] = array(
+                    'type' => 'input_image',
+                    'image_url' => "data:{$mediaType};base64,{$base64Data}"
+                );
+            } elseif ($type === 'file' && isset($block['data'])) {
+                $formatted[] = array(
+                    'type' => 'input_file',
+                    'filename' => $block['filename'] ?? 'document',
+                    'file_data' => "data:{$block['mime_type']};base64,{$block['data']}"
+                );
+            }
+        }
+
+        return $formatted ?: null;
     }
 }

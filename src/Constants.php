@@ -9,7 +9,7 @@ class AIResponseGeneratorConstants {
     const DEFAULT_TEMPERATURE = 1;
     const DEFAULT_TIMEOUT = 60;
     const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
-    const DEFAULT_MAX_TOKENS_PARAM = 'max_tokens';
+    const DEFAULT_MAX_TOKENS_PARAM = 'max_output_tokens';
 
     // Thread and content limits
     const DEFAULT_MAX_THREAD_ENTRIES = 20;
@@ -25,13 +25,28 @@ class AIResponseGeneratorConstants {
     const ANTHROPIC_MAX_IMAGES = 100;
 
     // Supported image MIME types
-    const SUPPORTED_IMAGE_TYPES = [
+    const SUPPORTED_IMAGE_TYPES = array(
         'image/jpeg',
         'image/jpg',
         'image/png',
         'image/gif',
         'image/webp'
-    ];
+    );
+
+    // Supported document/file MIME types
+    const SUPPORTED_FILE_TYPES = array(
+        'application/pdf',
+        'text/plain',
+        'text/csv',
+        'text/html',
+        'text/markdown',
+        'application/json',
+        'application/xml',
+        'text/xml',
+    );
+
+    // Default max files per request
+    const DEFAULT_MAX_FILES = 5;
 
     // HTTP status codes
     const HTTP_ERROR_THRESHOLD = 400;
@@ -39,7 +54,7 @@ class AIResponseGeneratorConstants {
     /**
      * Default values for configuration fields
      */
-    const DEFAULTS = [
+    const DEFAULTS = array(
         'max_tokens' => self::DEFAULT_MAX_TOKENS,
         'temperature' => self::DEFAULT_TEMPERATURE,
         'timeout' => self::DEFAULT_TIMEOUT,
@@ -47,8 +62,9 @@ class AIResponseGeneratorConstants {
         'max_tokens_param' => self::DEFAULT_MAX_TOKENS_PARAM,
         'max_thread_entries' => self::DEFAULT_MAX_THREAD_ENTRIES,
         'max_images' => self::DEFAULT_MAX_IMAGES,
-        'max_image_size_mb' => self::DEFAULT_MAX_IMAGE_SIZE_MB,
-    ];
+        'max_files' => self::DEFAULT_MAX_FILES,
+        'max_attachment_size_mb' => self::DEFAULT_MAX_IMAGE_SIZE_MB,
+    );
 
     /**
      * Get config value with fallback to default

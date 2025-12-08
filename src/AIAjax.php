@@ -27,16 +27,6 @@ class AIAjaxController extends AjaxController {
     }
 
     /**
-     * Logs an error message to osTicket's system log
-     */
-    private function logError($message, $alert = false) {
-        global $ost;
-        if ($ost) {
-            $ost->logError('AI Response Generator', $message, $alert);
-        }
-    }
-
-    /**
      * Validates request and returns ticket and config, or sends error response
      *
      * @return array [Ticket, PluginConfig, Staff]
@@ -211,7 +201,7 @@ class AIAjaxController extends AjaxController {
 
             $sendEvent('done', array('text' => $fullResponse));
         } catch (Throwable $t) {
-            $this->logError($t->getMessage());
+            $this->logError('AI Response Generator', $t->getMessage());
             $sendEvent('error', array('message' => $t->getMessage()));
         }
     }
@@ -254,7 +244,7 @@ class AIAjaxController extends AjaxController {
 
             return $this->encode(array('ok' => true, 'text' => $reply));
         } catch (Throwable $t) {
-            $this->logError($t->getMessage());
+            $this->logError('AI Response Generator', $t->getMessage());
             return $this->encode(array('ok' => false, 'error' => $t->getMessage()));
         }
     }

@@ -20,7 +20,6 @@
   top: 50%;
   width: 12px;
   height: 12px;
-  margin: -6px 0 0 -6px;
   border: 2px solid #0e76a8;
   border-top-color: transparent;
   border-radius: 50%;
@@ -28,8 +27,8 @@
 }
 
 @keyframes ai-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
 /* Toast notifications - osTicket style */

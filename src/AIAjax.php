@@ -75,49 +75,42 @@ class AIAjaxController extends AjaxController {
         if (!$cfg)
             Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
 
-        // Get configuration values with fallbacks to defaults
-        $api_url          = rtrim($cfg->get('api_url'), '/');
-        $api_key          = $cfg->get('api_key');
-        $model            = $cfg->get('model');
-        $max_tokens_param = $cfg->get('max_tokens_param') ?: AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS_PARAM;
-        $temperature      = $cfg->get('temperature');
-        $temperature      = ($temperature !== null && $temperature !== '') ? floatval($temperature) : AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
-        $max_tokens       = $cfg->get('max_tokens');
-        $max_tokens       = ($max_tokens !== null && $max_tokens !== '' && $max_tokens > 0) ? intval($max_tokens) : AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
-        $timeout          = $cfg->get('timeout');
-        $timeout          = ($timeout !== null && $timeout !== '' && $timeout > 0) ? intval($timeout) : AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
-        $max_thread_entries = $cfg->get('max_thread_entries');
-        $max_thread_entries = ($max_thread_entries !== null && $max_thread_entries !== '' && $max_thread_entries > 0) ? intval($max_thread_entries) : AIResponseGeneratorConstants::MAX_THREAD_ENTRIES;
+        // Shortcut for getting config values with defaults
+        $C = 'AIResponseGeneratorConstants';
+
+        // Get configuration values
+        $api_url            = rtrim($cfg->get('api_url'), '/');
+        $api_key            = $cfg->get('api_key');
+        $model              = $cfg->get('model');
+        $max_tokens_param   = $C::get($cfg, 'max_tokens_param');
+        $temperature        = $C::getFloat($cfg, 'temperature');
+        $max_tokens         = $C::getInt($cfg, 'max_tokens');
+        $timeout            = $C::getInt($cfg, 'timeout');
+        $max_thread_entries = $C::getInt($cfg, 'max_thread_entries');
 
         if (!$api_url || !$model)
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
 
-        // Build messages array (same as generate method)
+        // Build messages array
         $messages = array();
-        $system = trim((string)$cfg->get('system_prompt')) ?: AIResponseGeneratorConstants::DEFAULT_SYSTEM_PROMPT;
-        // Replace template variables in system prompt
+        $system = trim((string)$cfg->get('system_prompt')) ?: $C::DEFAULT_SYSTEM_PROMPT;
         $system = $this->replaceTemplateVars($system, $ticket, $thisstaff);
         $messages[] = array('role' => 'system', 'content' => $system);
 
+        // Add extra instructions if provided
         $extra_instructions = trim((string)($_POST['extra_instructions'] ?? ''));
-        // Limit extra instructions length to prevent abuse
-        if (strlen($extra_instructions) > AIResponseGeneratorConstants::MAX_EXTRA_INSTRUCTIONS_LENGTH) {
-            $extra_instructions = substr($extra_instructions, 0, AIResponseGeneratorConstants::MAX_EXTRA_INSTRUCTIONS_LENGTH);
+        if (strlen($extra_instructions) > $C::MAX_EXTRA_INSTRUCTIONS_LENGTH) {
+            $extra_instructions = substr($extra_instructions, 0, $C::MAX_EXTRA_INSTRUCTIONS_LENGTH);
         }
         if ($extra_instructions) {
             $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra_instructions);
         }
 
-        // Check if vision support is enabled
+        // Vision support settings
         $visionEnabled = (bool)$cfg->get('enable_vision');
         $includeInternalNotes = (bool)$cfg->get('include_internal_notes');
         $provider = $this->detectProvider($api_url, $model);
-        $providerImageLimit = $this->getProviderImageLimit($provider);
-
-        // Get max images from config with fallback
-        $maxImages = $cfg->get('max_images');
-        $maxImages = ($maxImages !== null && $maxImages !== '' && $maxImages >= 0) ? intval($maxImages) : AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES;
-        $maxImages = min($maxImages, $providerImageLimit);
+        $maxImages = min($C::getInt($cfg, 'max_images'), $this->getProviderImageLimit($provider));
 
         $thread = $ticket->getThread();
         if ($thread) {
@@ -273,52 +266,42 @@ class AIAjaxController extends AjaxController {
         if (!$cfg)
             Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
 
-        // Get configuration values with fallbacks to defaults
-        $api_url          = rtrim($cfg->get('api_url'), '/');
-        $api_key          = $cfg->get('api_key');
-        $model            = $cfg->get('model');
-        $max_tokens_param = $cfg->get('max_tokens_param') ?: AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS_PARAM;
-        $temperature      = $cfg->get('temperature');
-        $temperature      = ($temperature !== null && $temperature !== '') ? floatval($temperature) : AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
-        $max_tokens       = $cfg->get('max_tokens');
-        $max_tokens       = ($max_tokens !== null && $max_tokens !== '' && $max_tokens > 0) ? intval($max_tokens) : AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
-        $timeout          = $cfg->get('timeout');
-        $timeout          = ($timeout !== null && $timeout !== '' && $timeout > 0) ? intval($timeout) : AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
-        $max_thread_entries = $cfg->get('max_thread_entries');
-        $max_thread_entries = ($max_thread_entries !== null && $max_thread_entries !== '' && $max_thread_entries > 0) ? intval($max_thread_entries) : AIResponseGeneratorConstants::MAX_THREAD_ENTRIES;
+        // Shortcut for getting config values with defaults
+        $C = 'AIResponseGeneratorConstants';
+
+        // Get configuration values
+        $api_url            = rtrim($cfg->get('api_url'), '/');
+        $api_key            = $cfg->get('api_key');
+        $model              = $cfg->get('model');
+        $max_tokens_param   = $C::get($cfg, 'max_tokens_param');
+        $temperature        = $C::getFloat($cfg, 'temperature');
+        $max_tokens         = $C::getInt($cfg, 'max_tokens');
+        $timeout            = $C::getInt($cfg, 'timeout');
+        $max_thread_entries = $C::getInt($cfg, 'max_thread_entries');
 
         if (!$api_url || !$model)
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
 
-        // Build messages array starting with system prompt
+        // Build messages array
         $messages = array();
-
-        // Append instruction for the model (from config or default)
-        $system = trim((string)$cfg->get('system_prompt')) ?: AIResponseGeneratorConstants::DEFAULT_SYSTEM_PROMPT;
-        // Replace template variables in system prompt
+        $system = trim((string)$cfg->get('system_prompt')) ?: $C::DEFAULT_SYSTEM_PROMPT;
         $system = $this->replaceTemplateVars($system, $ticket, $thisstaff);
         $messages[] = array('role' => 'system', 'content' => $system);
 
-        // Add extra instructions as system message (meta-instruction for the AI)
+        // Add extra instructions if provided
         $extra_instructions = trim((string)($_POST['extra_instructions'] ?? ''));
-        // Limit extra instructions length to prevent abuse
-        if (strlen($extra_instructions) > AIResponseGeneratorConstants::MAX_EXTRA_INSTRUCTIONS_LENGTH) {
-            $extra_instructions = substr($extra_instructions, 0, AIResponseGeneratorConstants::MAX_EXTRA_INSTRUCTIONS_LENGTH);
+        if (strlen($extra_instructions) > $C::MAX_EXTRA_INSTRUCTIONS_LENGTH) {
+            $extra_instructions = substr($extra_instructions, 0, $C::MAX_EXTRA_INSTRUCTIONS_LENGTH);
         }
         if ($extra_instructions) {
             $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra_instructions);
         }
 
-        // Check if vision support is enabled
+        // Vision support settings
         $visionEnabled = (bool)$cfg->get('enable_vision');
         $includeInternalNotes = (bool)$cfg->get('include_internal_notes');
         $provider = $this->detectProvider($api_url, $model);
-        $providerImageLimit = $this->getProviderImageLimit($provider);
-
-        // Get max images from config with fallback
-        $maxImages = $cfg->get('max_images');
-        $maxImages = ($maxImages !== null && $maxImages !== '' && $maxImages >= 0) ? intval($maxImages) : AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES;
-        $maxImages = min($maxImages, $providerImageLimit);
+        $maxImages = min($C::getInt($cfg, 'max_images'), $this->getProviderImageLimit($provider));
 
         // Build thread context using latest thread entries
         $thread = $ticket->getThread();

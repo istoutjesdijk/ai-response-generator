@@ -75,15 +75,19 @@ class AIAjaxController extends AjaxController {
         if (!$cfg)
             Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
 
-        // Get configuration values (defaults are handled by PluginConfig)
+        // Get configuration values with fallbacks to defaults
         $api_url          = rtrim($cfg->get('api_url'), '/');
         $api_key          = $cfg->get('api_key');
         $model            = $cfg->get('model');
-        $max_tokens_param = $cfg->get('max_tokens_param');
-        $temperature      = floatval($cfg->get('temperature'));
-        $max_tokens       = intval($cfg->get('max_tokens'));
-        $timeout          = intval($cfg->get('timeout'));
-        $max_thread_entries = intval($cfg->get('max_thread_entries'));
+        $max_tokens_param = $cfg->get('max_tokens_param') ?: AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS_PARAM;
+        $temperature      = $cfg->get('temperature');
+        $temperature      = ($temperature !== null && $temperature !== '') ? floatval($temperature) : AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
+        $max_tokens       = $cfg->get('max_tokens');
+        $max_tokens       = ($max_tokens !== null && $max_tokens !== '' && $max_tokens > 0) ? intval($max_tokens) : AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
+        $timeout          = $cfg->get('timeout');
+        $timeout          = ($timeout !== null && $timeout !== '' && $timeout > 0) ? intval($timeout) : AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
+        $max_thread_entries = $cfg->get('max_thread_entries');
+        $max_thread_entries = ($max_thread_entries !== null && $max_thread_entries !== '' && $max_thread_entries > 0) ? intval($max_thread_entries) : AIResponseGeneratorConstants::MAX_THREAD_ENTRIES;
 
         if (!$api_url || !$model)
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
@@ -110,8 +114,10 @@ class AIAjaxController extends AjaxController {
         $provider = $this->detectProvider($api_url, $model);
         $providerImageLimit = $this->getProviderImageLimit($provider);
 
-        // Get max images from config
-        $maxImages = min(intval($cfg->get('max_images')), $providerImageLimit);
+        // Get max images from config with fallback
+        $maxImages = $cfg->get('max_images');
+        $maxImages = ($maxImages !== null && $maxImages !== '' && $maxImages >= 0) ? intval($maxImages) : AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES;
+        $maxImages = min($maxImages, $providerImageLimit);
 
         $thread = $ticket->getThread();
         if ($thread) {
@@ -267,15 +273,19 @@ class AIAjaxController extends AjaxController {
         if (!$cfg)
             Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
 
-        // Get configuration values (defaults are handled by PluginConfig)
+        // Get configuration values with fallbacks to defaults
         $api_url          = rtrim($cfg->get('api_url'), '/');
         $api_key          = $cfg->get('api_key');
         $model            = $cfg->get('model');
-        $max_tokens_param = $cfg->get('max_tokens_param');
-        $temperature      = floatval($cfg->get('temperature'));
-        $max_tokens       = intval($cfg->get('max_tokens'));
-        $timeout          = intval($cfg->get('timeout'));
-        $max_thread_entries = intval($cfg->get('max_thread_entries'));
+        $max_tokens_param = $cfg->get('max_tokens_param') ?: AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS_PARAM;
+        $temperature      = $cfg->get('temperature');
+        $temperature      = ($temperature !== null && $temperature !== '') ? floatval($temperature) : AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
+        $max_tokens       = $cfg->get('max_tokens');
+        $max_tokens       = ($max_tokens !== null && $max_tokens !== '' && $max_tokens > 0) ? intval($max_tokens) : AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
+        $timeout          = $cfg->get('timeout');
+        $timeout          = ($timeout !== null && $timeout !== '' && $timeout > 0) ? intval($timeout) : AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
+        $max_thread_entries = $cfg->get('max_thread_entries');
+        $max_thread_entries = ($max_thread_entries !== null && $max_thread_entries !== '' && $max_thread_entries > 0) ? intval($max_thread_entries) : AIResponseGeneratorConstants::MAX_THREAD_ENTRIES;
 
         if (!$api_url || !$model)
             Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
@@ -305,8 +315,10 @@ class AIAjaxController extends AjaxController {
         $provider = $this->detectProvider($api_url, $model);
         $providerImageLimit = $this->getProviderImageLimit($provider);
 
-        // Get max images from config
-        $maxImages = min(intval($cfg->get('max_images')), $providerImageLimit);
+        // Get max images from config with fallback
+        $maxImages = $cfg->get('max_images');
+        $maxImages = ($maxImages !== null && $maxImages !== '' && $maxImages >= 0) ? intval($maxImages) : AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES;
+        $maxImages = min($maxImages, $providerImageLimit);
 
         // Build thread context using latest thread entries
         $thread = $ticket->getThread();

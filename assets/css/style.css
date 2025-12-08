@@ -1,10 +1,18 @@
 /* AI Response Generator Styles - osTicket Compatible */
 
+/* Toolbar button - center icon with flexbox */
+a.action-button.ai-generate-reply {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 28px;
+}
+
 /* Loading state */
 .ai-loading {
   opacity: 0.7;
   pointer-events: none;
-  position: relative;
 }
 
 /* Hide icon but preserve space during loading */
@@ -13,16 +21,12 @@
   visibility: hidden !important;
 }
 
-/* Spinner positioned over the hidden icon */
+/* Spinner replaces icon in same centered position */
 .ai-loading:after {
   content: '';
   position: absolute;
-  left: 50%;
-  top: 50%;
   width: 14px;
   height: 14px;
-  margin-left: -7px;
-  margin-top: -7px;
   border: 2px solid #0e76a8;
   border-top-color: transparent;
   border-radius: 50%;
@@ -258,7 +262,6 @@
 
 /* Toolbar button - match osTicket action buttons */
 a.action-button.ai-generate-reply {
-  display: inline-block;
   margin-right: 5px;
   background: linear-gradient(to bottom, #f8f8f8 0%, #efefef 100%);
   border: 1px solid #ccc;

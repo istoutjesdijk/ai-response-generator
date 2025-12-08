@@ -71,27 +71,20 @@ class AIResponseGeneratorPlugin extends Plugin {
         if (!$ticket || !method_exists($ticket, 'getId')) return;
         if (!isset($_REQUEST['id']) && !isset($_REQUEST['number'])) return;
 
-        static $rendered = array();
-        $configs = self::getAllConfigs();
-        if (!$configs) return;
+        static $rendered = false;
+        if ($rendered) return;
+        $rendered = true;
 
-        foreach ($configs as $iid => $cfg) {
-            if (isset($rendered[$iid])) continue;
-            $rendered[$iid] = true;
-
-            $inst = $cfg->getInstance();
-            $name = $inst ? $inst->getName() : ('Instance '.$iid);
-            $showPopup = (bool)$cfg->get('show_instructions_popup');
-            $enableStreaming = (bool)$cfg->get('enable_streaming');
+        foreach ($this->getInstanceButtonData($ticket) as $btn) {
             ?>
             <li>
                 <a class="ai-generate-reply" href="#ai/generate"
-                   data-ticket-id="<?php echo (int)$ticket->getId(); ?>"
-                   data-instance-id="<?php echo (int)$iid; ?>"
-                   data-show-popup="<?php echo $showPopup ? '1' : '0'; ?>"
-                   data-enable-streaming="<?php echo $enableStreaming ? '1' : '0'; ?>">
+                   data-ticket-id="<?php echo $btn['ticketId']; ?>"
+                   data-instance-id="<?php echo $btn['instanceId']; ?>"
+                   data-show-popup="<?php echo $btn['showPopup']; ?>"
+                   data-enable-streaming="<?php echo $btn['enableStreaming']; ?>">
                     <i class="icon-magic"></i>
-                    <?php echo __('AI Response'); ?> — <?php echo Format::htmlchars($name); ?>
+                    <?php echo Format::htmlchars($btn['title']); ?>
                 </a>
             </li>
             <?php
@@ -99,39 +92,38 @@ class AIResponseGeneratorPlugin extends Plugin {
     }
 
     /**
-     * Gets toolbar button data for JavaScript injection
+     * Gets button data for all enabled instances
      *
-     * @param object $object Viewed object (e.g., Ticket)
-     * @return array Array of button configuration data for each instance
+     * @param Ticket $ticket Ticket object
+     * @return array Array of button configuration data
      */
-    private function getToolbarButtonData($object) {
-        // Verify this is a ticket
-        if (!$object || !method_exists($object, 'getId')) return array();
-
-        $ticket_id = (int)$object->getId();
-        if (!$ticket_id) return array();
-
-        // Get all enabled instance configs
+    private function getInstanceButtonData($ticket) {
         $configs = self::getAllConfigs();
-        if (!$configs) return array();
+        if (!$configs || !$ticket) return array();
+
+        $ticket_id = (int)$ticket->getId();
+        if (!$ticket_id) return array();
 
         $buttons = array();
         foreach ($configs as $iid => $cfg) {
             $inst = $cfg->getInstance();
-            $name = $inst ? $inst->getName() : ('Instance '.$iid);
-            $showPopup = (bool)$cfg->get('show_instructions_popup');
-            $enableStreaming = (bool)$cfg->get('enable_streaming');
-
             $buttons[] = array(
                 'ticketId' => $ticket_id,
                 'instanceId' => (int)$iid,
-                'showPopup' => $showPopup ? '1' : '0',
-                'enableStreaming' => $enableStreaming ? '1' : '0',
-                'title' => sprintf(__('AI Response — %s'), $name)
+                'showPopup' => (bool)$cfg->get('show_instructions_popup') ? '1' : '0',
+                'enableStreaming' => (bool)$cfg->get('enable_streaming') ? '1' : '0',
+                'title' => sprintf(__('AI Response — %s'), $inst ? $inst->getName() : ('Instance '.$iid))
             );
         }
-
         return $buttons;
+    }
+
+    /**
+     * Gets toolbar button data for JavaScript injection (wrapper for templates)
+     */
+    private function getToolbarButtonData($object) {
+        if (!$object || !method_exists($object, 'getId')) return array();
+        return $this->getInstanceButtonData($object);
     }
 
     /**
@@ -156,25 +148,22 @@ class AIResponseGeneratorPlugin extends Plugin {
      * @param array $data View data passed by reference
      */
     function onObjectView($object, &$data) {
-    // Only show on ticket detail views, not ticket lists
-    if (!$this->isTicketDetailView($object))
-        return;
+        if (!$this->isTicketDetailView($object))
+            return;
 
-    // Prevent duplicate inclusion of CSS/JS assets
-    static $assets_included = false;
-    if (!$assets_included) {
-        $assets_included = true;
-        // Emit asset links. Attempt static files, plus a small inline bootstrap
-        $base = ROOT_PATH . 'include/plugins/ai-response-generator/';
-        $js = $base . 'assets/js/main.js?v=' . urlencode(GIT_VERSION);
-        $css = $base . 'assets/css/style.css?v=' . urlencode(GIT_VERSION);
-        echo sprintf('<link rel="stylesheet" type="text/css" href="%s"/>', $css);
-        echo sprintf('<script type="text/javascript" src="%s"></script>', $js);
-    }
+        // Include CSS/JS assets once
+        static $assets_included = false;
+        if (!$assets_included) {
+            $assets_included = true;
+            $base = ROOT_PATH . 'include/plugins/ai-response-generator/';
+            $js = $base . 'assets/js/main.js?v=' . urlencode(GIT_VERSION);
+            $css = $base . 'assets/css/style.css?v=' . urlencode(GIT_VERSION);
+            echo sprintf('<link rel="stylesheet" type="text/css" href="%s"/>', $css);
+            echo sprintf('<script type="text/javascript" src="%s"></script>', $js);
+        }
 
-    // IMPORTANT: Always run inline script to refresh ticket data on pjax navigation
-    // Inline bootstrap for route and toolbar button injection
-    ?>
+        // Inline bootstrap for toolbar button injection (runs on every pjax load)
+        ?>
     <script type="text/javascript">
     window.AIResponseGen = window.AIResponseGen || {};
     window.AIResponseGen.ajaxEndpoint = 'ajax.php/ai/response';

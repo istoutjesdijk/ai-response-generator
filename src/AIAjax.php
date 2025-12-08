@@ -12,24 +12,38 @@ require_once(__DIR__ . '/Constants.php');
 class AIAjaxController extends AjaxController {
 
     /**
-     * Generates AI response with streaming for a ticket
-     *
-     * @return void Streams SSE events directly to the client
+     * Validates CSRF token for POST requests
      */
-    function generateStreaming() {
+    private function validateCSRF() {
+        global $ost;
+
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST')
+            return;
+
+        $token = $_POST['__CSRFToken__'] ?? $_SERVER['HTTP_X_CSRFTOKEN'] ?? null;
+        if (!$ost || !$ost->getCSRF() || !$ost->getCSRF()->validateToken($token))
+            $this->exerr(403, __('CSRF token validation failed'));
+    }
+
+    /**
+     * Validates request and returns ticket and config, or sends error response
+     *
+     * @return array [Ticket, PluginConfig, Staff]
+     */
+    private function validateAndGetContext() {
         global $thisstaff;
         $this->staffOnly();
+        $this->validateCSRF();
 
         $ticket_id = (int) ($_POST['ticket_id'] ?? $_GET['ticket_id'] ?? 0);
         if (!$ticket_id || !($ticket = Ticket::lookup($ticket_id)))
-            Http::response(404, $this->encode(array('ok' => false, 'error' => __('Unknown ticket'))));
+            $this->exerr(404, __('Unknown ticket'));
 
-        // Permission check: must be able to reply
         $role = $ticket->getRole($thisstaff);
         if (!$role || !$role->hasPerm(Ticket::PERM_REPLY))
-            Http::response(403, $this->encode(array('ok' => false, 'error' => __('Access denied'))));
+            $this->exerr(403, __('Access denied'));
 
-        // Load plugin config
+        // Load plugin config (support per-instance selection)
         $cfg = null;
         $iid = (int)($_POST['instance_id'] ?? $_GET['instance_id'] ?? 0);
         if ($iid) {
@@ -40,463 +54,233 @@ class AIAjaxController extends AjaxController {
         if (!$cfg)
             $cfg = AIResponseGeneratorPlugin::getActiveConfig();
         if (!$cfg)
-            Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
+            $this->exerr(500, __('Plugin not configured'));
 
-        // Build configuration parameters and validate BEFORE setting SSE headers
-        $api_url = rtrim($cfg->get('api_url'), '/');
-        $api_key = $cfg->get('api_key');
-        $model   = $cfg->get('model');
-        $max_tokens_param = trim((string)$cfg->get('max_tokens_param')) ?: 'max_tokens';
+        return array($ticket, $cfg, $thisstaff);
+    }
 
-        $temperature = $cfg->get('temperature');
-        if ($temperature === null || $temperature === '' || !is_numeric($temperature)) {
-            $temperature = AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
-        } else {
-            $temperature = floatval($temperature);
-        }
-
-        $max_tokens = $cfg->get('max_tokens');
-        if ($max_tokens === null || $max_tokens === '' || !is_numeric($max_tokens) || $max_tokens < 1) {
-            $max_tokens = AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
-        } else {
-            $max_tokens = intval($max_tokens);
-        }
-
-        $timeout = $cfg->get('timeout');
-        if ($timeout === null || $timeout === '' || !is_numeric($timeout) || $timeout < 1) {
-            $timeout = AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
-        } else {
-            $timeout = intval($timeout);
-        }
-
-        if (!$api_url || !$model)
-            Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
-
-        $max_thread_entries = $cfg->get('max_thread_entries');
-        if ($max_thread_entries === null || $max_thread_entries === '' || !is_numeric($max_thread_entries) || $max_thread_entries < 1) {
-            $max_thread_entries = AIResponseGeneratorConstants::MAX_THREAD_ENTRIES;
-        } else {
-            $max_thread_entries = intval($max_thread_entries);
-        }
-
-        // Build messages array (same as generate method)
-        global $thisstaff;
+    /**
+     * Builds messages array from ticket thread for AI context
+     *
+     * @param Ticket $ticket
+     * @param PluginConfig $cfg
+     * @param Staff $staff
+     * @return array Messages array for AI API
+     */
+    private function buildMessages($ticket, $cfg, $staff) {
+        $C = 'AIResponseGeneratorConstants';
         $messages = array();
-        $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
-        // Expand template variables in system prompt
-        $system = $this->expandSystemPrompt($system, $ticket, $thisstaff);
+
+        // System prompt
+        $system = trim((string)$cfg->get('system_prompt')) ?: $C::DEFAULT_SYSTEM_PROMPT;
+        $system = $this->replaceTemplateVars($system, $ticket, $staff);
         $messages[] = array('role' => 'system', 'content' => $system);
 
-        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
-        if ($extra_instructions) {
-            $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra_instructions);
+        // Extra instructions
+        $extra = trim((string)($_POST['extra_instructions'] ?? ''));
+        if (strlen($extra) > $C::MAX_EXTRA_INSTRUCTIONS_LENGTH) {
+            $extra = substr($extra, 0, $C::MAX_EXTRA_INSTRUCTIONS_LENGTH);
+        }
+        if ($extra) {
+            $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra);
         }
 
-        // Check if vision support is enabled
+        // Thread entries
         $visionEnabled = (bool)$cfg->get('enable_vision');
-        $provider = $this->detectProvider($api_url, $model);
-        $providerImageLimit = $this->getProviderImageLimit($provider);
-
-        // Get max images from config
-        $maxImages = $cfg->get('max_images');
-        if ($maxImages === null || $maxImages === '' || !is_numeric($maxImages) || $maxImages < 0) {
-            $maxImages = AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES;
-        } else {
-            $maxImages = intval($maxImages);
-        }
-        // Respect provider limits
-        $maxImages = min($maxImages, $providerImageLimit);
+        $includeInternalNotes = (bool)$cfg->get('include_internal_notes');
+        $provider = $this->detectProvider($cfg->get('api_url'), $cfg->get('model'));
+        $maxImages = min($C::getInt($cfg, 'max_images'), $this->getProviderImageLimit($provider));
+        $max_thread_entries = $C::getInt($cfg, 'max_thread_entries');
 
         $thread = $ticket->getThread();
-        if ($thread) {
-            // Use osTicket's QuerySet methods for efficient database query
-            // Clone to avoid modifying cached entries, order by most recent, limit to configured amount
-            $entries = clone $thread->getEntries();
-            $entries->order_by('-created')->limit($max_thread_entries);
+        if (!$thread) return $messages;
 
-            // Reverse to get chronological order (oldest to newest)
-            $entryList = array_reverse(iterator_to_array($entries));
+        $entries = clone $thread->getEntries();
+        $entries->order_by('-created')->limit($max_thread_entries);
+        $entryList = array_reverse(iterator_to_array($entries));
 
-            $imageCount = 0;
+        $imageCount = 0;
+        foreach ($entryList as $E) {
+            $type = $E->getType();
 
-            foreach ($entryList as $E) {
-                $type = $E->getType();
-                $body = ThreadEntryBody::clean($E->getBody());
-                $who  = $E->getPoster();
-                $who  = is_object($who) ? $who->getName() : 'User';
+            if ($type === 'N' && !$includeInternalNotes) continue;
 
-                // Map to role for AI context
-                $role = ($type == 'M') ? 'user' : 'assistant';
+            $body = ThreadEntryBody::clean($E->getBody());
+            $who = $E->getPoster();
+            $who = is_object($who) ? $who->getName() : 'User';
+            $role = ($type == 'M') ? 'user' : 'assistant';
 
-                // Format content based on entry type
-                if ($type === 'N') {
-                    // Internal notes: always include name with prefix
-                    $textContent = sprintf('[Internal Note - %s] %s', $who, $body);
-                } elseif ($type === 'M' && $who === 'User') {
-                    // Customer message with fallback name: just the body (role says it's user)
-                    $textContent = $body;
-                } else {
-                    // Customer with real name or Agent response: include name
-                    $textContent = sprintf('%s: %s', $who, $body);
+            // Format content
+            if ($type === 'N') {
+                $textContent = sprintf('[Internal Note - %s] %s', $who, $body);
+            } elseif ($type === 'M' && $who === 'User') {
+                $textContent = $body;
+            } else {
+                $textContent = sprintf('%s: %s', $who, $body);
+            }
+
+            // Process images if vision enabled
+            $images = ($visionEnabled && $maxImages > 0)
+                ? $this->processImageAttachments($E, $cfg, $imageCount, $maxImages)
+                : array();
+
+            if (!empty($images)) {
+                $content = array(array('type' => 'text', 'text' => $textContent));
+                foreach ($images as $img) {
+                    $content[] = array(
+                        'type' => 'image',
+                        'source' => array(
+                            'type' => 'base64',
+                            'media_type' => $img['type'],
+                            'data' => $img['data']
+                        )
+                    );
                 }
-
-                // Process images if vision is enabled
-                $images = array();
-                if ($visionEnabled && $maxImages > 0) {
-                    $images = $this->processImageAttachments($E, $cfg, $imageCount, $maxImages);
-                }
-
-                // If there are images, use content array format; otherwise use simple string
-                if (!empty($images)) {
-                    $content = array();
-                    // Add text first
-                    $content[] = array('type' => 'text', 'text' => $textContent);
-                    // Add images
-                    foreach ($images as $img) {
-                        $content[] = array(
-                            'type' => 'image',
-                            'source' => array(
-                                'type' => 'base64',
-                                'media_type' => $img['type'],
-                                'data' => $img['data']
-                            )
-                        );
-                    }
-                    $messages[] = array('role' => $role, 'content' => $content);
-                } else {
-                    // No images, use simple string format
-                    $messages[] = array('role' => $role, 'content' => $textContent);
-                }
+                $messages[] = array('role' => $role, 'content' => $content);
+            } else {
+                $messages[] = array('role' => $role, 'content' => $textContent);
             }
         }
 
-        // Validation
-        if (stripos($model, 'gpt-5-nano') !== false && $temperature != 1) {
-            Http::response(400, $this->encode(array('ok' => false, 'error' => __('This model only supports temperature=1.'))));
-        }
+        return $messages;
+    }
 
-        // All validations passed - NOW set SSE headers
+    /**
+     * Generates AI response with streaming
+     */
+    function generateStreaming() {
+        list($ticket, $cfg, $staff) = $this->validateAndGetContext();
+
+        $C = 'AIResponseGeneratorConstants';
+        $api_url = rtrim($cfg->get('api_url'), '/');
+        $model = $cfg->get('model');
+
+        if (!$api_url || !$model)
+            $this->exerr(400, __('Missing API URL or model'));
+
+        $messages = $this->buildMessages($ticket, $cfg, $staff);
+
+        // Set SSE headers
         header('Content-Type: text/event-stream');
         header('Cache-Control: no-cache');
         header('Connection: keep-alive');
-        header('X-Accel-Buffering: no'); // Disable nginx buffering
+        header('X-Accel-Buffering: no');
 
-        // Disable output buffering
         while (ob_get_level()) ob_end_clean();
 
-        // Helper to send SSE event
         $sendEvent = function($event, $data) {
-            echo "event: {$event}\n";
-            echo "data: " . json_encode($data) . "\n\n";
-            // Ensure immediate output
+            echo "event: {$event}\ndata: " . json_encode($data) . "\n\n";
             if (ob_get_level()) ob_flush();
             flush();
-            // Force flush for some servers
-            if (function_exists('fastcgi_finish_request')) {
-                // Don't use this - it would close the connection
-                // fastcgi_finish_request();
-            }
         };
 
         try {
-            $client = new AIClient($api_url, $api_key);
-            $provider = 'auto';
-            $anthVersion = trim((string)$cfg->get('anthropic_version')) ?: AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION;
+            $client = new AIClient($api_url, $cfg->get('api_key'));
+            $anthVersion = $C::get($cfg, 'anthropic_version');
 
-            // Collect full response for template expansion
             $fullResponse = '';
+            $client->generateResponse(
+                $model, $messages,
+                $C::getFloat($cfg, 'temperature'),
+                $C::getInt($cfg, 'max_tokens'),
+                $C::get($cfg, 'max_tokens_param'),
+                $C::getInt($cfg, 'timeout'),
+                'auto', $anthVersion,
+                function($chunk) use ($sendEvent, &$fullResponse) {
+                    $fullResponse .= $chunk;
+                    $sendEvent('chunk', array('text' => $chunk));
+                }
+            );
 
-            // Stream response with callback
-            $client->generateResponse($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $provider, $anthVersion, function($chunk) use ($sendEvent, &$fullResponse) {
-                $fullResponse .= $chunk;
-                $sendEvent('chunk', array('text' => $chunk));
-            });
-
-            // Apply response template if provided
+            // Apply response template
             $tpl = trim((string)$cfg->get('response_template'));
             if ($tpl) {
-                global $thisstaff;
-                $tpl = $this->expandTemplate($tpl, $ticket, $fullResponse, $thisstaff);
-                $fullResponse = $tpl;
+                $fullResponse = $this->replaceTemplateVars($tpl, $ticket, $staff, array('ai_text' => $fullResponse));
             }
 
-            // Send final event with complete response
             $sendEvent('done', array('text' => $fullResponse));
-
         } catch (Throwable $t) {
+            $this->logError('AI Response Generator', $t->getMessage());
             $sendEvent('error', array('message' => $t->getMessage()));
         }
     }
 
     /**
-     * Generates AI response for a ticket
-     *
-     * @return string JSON encoded response
+     * Generates AI response for a ticket (non-streaming)
      */
     function generate() {
-        global $thisstaff;
-        $this->staffOnly();
+        list($ticket, $cfg, $staff) = $this->validateAndGetContext();
 
-        $ticket_id = (int) ($_POST['ticket_id'] ?? $_GET['ticket_id'] ?? 0);
-        if (!$ticket_id || !($ticket = Ticket::lookup($ticket_id)))
-            Http::response(404, $this->encode(array('ok' => false, 'error' => __('Unknown ticket'))));
-
-        // Permission check: must be able to reply
-        $role = $ticket->getRole($thisstaff);
-        if (!$role || !$role->hasPerm(Ticket::PERM_REPLY))
-            Http::response(403, $this->encode(array('ok' => false, 'error' => __('Access denied'))));
-
-        // Load plugin config from active instance
-        // Support per-instance selection via instance_id
-        $cfg = null;
-        $iid = (int)($_POST['instance_id'] ?? $_GET['instance_id'] ?? 0);
-        if ($iid) {
-            $all = AIResponseGeneratorPlugin::getAllConfigs();
-            if (isset($all[$iid]))
-                $cfg = $all[$iid];
-        }
-        if (!$cfg)
-            $cfg = AIResponseGeneratorPlugin::getActiveConfig();
-        if (!$cfg)
-            Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
-
-
-    $api_url = rtrim($cfg->get('api_url'), '/');
-    $api_key = $cfg->get('api_key');
-    $model   = $cfg->get('model');
-    $max_tokens_param = trim((string)$cfg->get('max_tokens_param')) ?: 'max_tokens';
-
-    $temperature = $cfg->get('temperature');
-    if ($temperature === null || $temperature === '' || !is_numeric($temperature)) {
-        $temperature = AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
-    } else {
-        $temperature = floatval($temperature);
-    }
-
-    // Read max_tokens from config, default if not set or invalid
-    $max_tokens = $cfg->get('max_tokens');
-    if ($max_tokens === null || $max_tokens === '' || !is_numeric($max_tokens) || $max_tokens < 1) {
-        $max_tokens = AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
-    } else {
-        $max_tokens = intval($max_tokens);
-    }
-
-    // Read timeout from config, default if not set or invalid
-    $timeout = $cfg->get('timeout');
-    if ($timeout === null || $timeout === '' || !is_numeric($timeout) || $timeout < 1) {
-        $timeout = AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
-    } else {
-        $timeout = intval($timeout);
-    }
+        $C = 'AIResponseGeneratorConstants';
+        $api_url = rtrim($cfg->get('api_url'), '/');
+        $model = $cfg->get('model');
 
         if (!$api_url || !$model)
-            Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
+            $this->exerr(400, __('Missing API URL or model'));
 
-        // Read max_thread_entries from config, default if not set or invalid
-        $max_thread_entries = $cfg->get('max_thread_entries');
-        if ($max_thread_entries === null || $max_thread_entries === '' || !is_numeric($max_thread_entries) || $max_thread_entries < 1) {
-            $max_thread_entries = AIResponseGeneratorConstants::MAX_THREAD_ENTRIES;
-        } else {
-            $max_thread_entries = intval($max_thread_entries);
-        }
-
-        // Build messages array starting with system prompt
-        $messages = array();
-
-        // Append instruction for the model (from config or default)
-        $system = trim((string)$cfg->get('system_prompt')) ?: "You are a helpful support agent. Draft a concise, professional reply. Quote the relevant ticket details when appropriate. Keep HTML minimal.";
-        // Expand template variables in system prompt
-        $system = $this->expandSystemPrompt($system, $ticket, $thisstaff);
-        $messages[] = array('role' => 'system', 'content' => $system);
-
-        // Add extra instructions as system message (meta-instruction for the AI)
-        $extra_instructions = trim((string)($_POST['extra_instructions'] ?? $_GET['extra_instructions'] ?? ''));
-        if ($extra_instructions) {
-            $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra_instructions);
-        }
-
-        // Check if vision support is enabled
-        $visionEnabled = (bool)$cfg->get('enable_vision');
-        $provider = $this->detectProvider($api_url, $model);
-        $providerImageLimit = $this->getProviderImageLimit($provider);
-
-        // Get max images from config
-        $maxImages = $cfg->get('max_images');
-        if ($maxImages === null || $maxImages === '' || !is_numeric($maxImages) || $maxImages < 0) {
-            $maxImages = AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES;
-        } else {
-            $maxImages = intval($maxImages);
-        }
-        // Respect provider limits
-        $maxImages = min($maxImages, $providerImageLimit);
-
-        // Build thread context using latest thread entries
-        $thread = $ticket->getThread();
-        if ($thread) {
-            // Use osTicket's QuerySet methods for efficient database query
-            // Clone to avoid modifying cached entries, order by most recent, limit to configured amount
-            $entries = clone $thread->getEntries();
-            $entries->order_by('-created')->limit($max_thread_entries);
-
-            // Reverse to get chronological order (oldest to newest)
-            $entryList = array_reverse(iterator_to_array($entries));
-
-            $imageCount = 0;
-
-            foreach ($entryList as $E) {
-                $type = $E->getType();
-                $body = ThreadEntryBody::clean($E->getBody());
-                $who  = $E->getPoster();
-                $who  = is_object($who) ? $who->getName() : 'User';
-
-                // Map to role for AI context
-                $role = ($type == 'M') ? 'user' : 'assistant';
-
-                // Format content based on entry type
-                if ($type === 'N') {
-                    // Internal notes: always include name with prefix
-                    $textContent = sprintf('[Internal Note - %s] %s', $who, $body);
-                } elseif ($type === 'M' && $who === 'User') {
-                    // Customer message with fallback name: just the body (role says it's user)
-                    $textContent = $body;
-                } else {
-                    // Customer with real name or Agent response: include name
-                    $textContent = sprintf('%s: %s', $who, $body);
-                }
-
-                // Process images if vision is enabled
-                $images = array();
-                if ($visionEnabled && $maxImages > 0) {
-                    $images = $this->processImageAttachments($E, $cfg, $imageCount, $maxImages);
-                }
-
-                // If there are images, use content array format; otherwise use simple string
-                if (!empty($images)) {
-                    $content = array();
-                    // Add text first
-                    $content[] = array('type' => 'text', 'text' => $textContent);
-                    // Add images
-                    foreach ($images as $img) {
-                        $content[] = array(
-                            'type' => 'image',
-                            'source' => array(
-                                'type' => 'base64',
-                                'media_type' => $img['type'],
-                                'data' => $img['data']
-                            )
-                        );
-                    }
-                    $messages[] = array('role' => $role, 'content' => $content);
-                } else {
-                    // No images, use simple string format
-                    $messages[] = array('role' => $role, 'content' => $textContent);
-                }
-            }
-        }
+        $messages = $this->buildMessages($ticket, $cfg, $staff);
 
         try {
-            // Validation: some models only support temperature=1
-            if (stripos($model, 'gpt-5-nano') !== false && $temperature != 1) {
-                throw new Exception(__('This model only supports temperature=1.'));
-            }
-            $client = new AIClient($api_url, $api_key);
-            // Let the client auto-detect the provider
-            $provider = 'auto';
-            $anthVersion = trim((string)$cfg->get('anthropic_version')) ?: AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION;
-            // Pass the configurable timeout and provider info to the client
-            $reply = $client->generateResponse($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $provider, $anthVersion);
+            $client = new AIClient($api_url, $cfg->get('api_key'));
+            $reply = $client->generateResponse(
+                $model, $messages,
+                $C::getFloat($cfg, 'temperature'),
+                $C::getInt($cfg, 'max_tokens'),
+                $C::get($cfg, 'max_tokens_param'),
+                $C::getInt($cfg, 'timeout'),
+                'auto',
+                $C::get($cfg, 'anthropic_version')
+            );
+
             if (!$reply)
                 throw new Exception(__('Empty response from model'));
 
-            // Apply response template if provided
+            // Apply response template
             $tpl = trim((string)$cfg->get('response_template'));
             if ($tpl) {
-                global $thisstaff;
-                $tpl = $this->expandTemplate($tpl, $ticket, $reply, $thisstaff);
-                $reply = $tpl;
+                $reply = $this->replaceTemplateVars($tpl, $ticket, $staff, array('ai_text' => $reply));
             }
 
             return $this->encode(array('ok' => true, 'text' => $reply));
-        }
-        catch (Throwable $t) {
+        } catch (Throwable $t) {
+            $this->logError('AI Response Generator', $t->getMessage());
             return $this->encode(array('ok' => false, 'error' => $t->getMessage()));
         }
     }
 
     /**
-     * Builds array of template variable replacements from ticket context
+     * Replaces template variables using osTicket's native VariableReplacer
      *
+     * Supports all osTicket template variables like %{ticket.number}, %{ticket.user.name}, etc.
+     * Also supports custom variables: %{date}, %{time}, %{datetime}, %{day}, %{ai_text}
+     *
+     * @param string $template Template string with %{...} placeholders
      * @param Ticket $ticket Ticket instance
      * @param Staff|null $staff Staff member (agent) instance
-     * @return array Associative array of placeholder => value replacements
+     * @param array $extraVars Additional variables to replace (e.g., ['ai_text' => $response])
+     * @return string Expanded template with replaced placeholders
      */
-    private function buildTemplateReplacements(Ticket $ticket, $staff=null) {
-        $user = $ticket->getOwner();
-        $dept = $ticket->getDept();
-        $status = $ticket->getStatus();
-        $priority = $ticket->getPriority();
+    private function replaceTemplateVars($template, Ticket $ticket, $staff=null, $extraVars=array()) {
+        global $ost;
 
-        // Agent name
-        $agentName = '';
-        if ($staff && is_object($staff)) {
-            $agentName = method_exists($staff, 'getName') ? (string)$staff->getName() : '';
-        }
-
-        // Date/time formatting
+        // Add date/time variables
         $now = new DateTime();
-        $createDate = $ticket->getCreateDate();
 
-        return array(
-            // Ticket info
-            '{ticket_number}' => (string)$ticket->getNumber(),
-            '{ticket_subject}' => (string)$ticket->getSubject(),
-            '{ticket_status}' => $status ? (string)$status->getName() : '',
-            '{ticket_priority}' => $priority ? (string)$priority->getDesc() : '',
-            '{ticket_department}' => $dept ? (string)$dept->getName() : '',
-            '{ticket_source}' => (string)$ticket->getSource(),
-            '{ticket_created}' => $createDate ? date('Y-m-d H:i', strtotime($createDate)) : '',
-
-            // Customer/user info
-            '{user_name}' => $user ? (string)$user->getName() : '',
-            '{user_email}' => $user ? (string)$user->getEmail() : '',
-
-            // Agent info
-            '{agent_name}' => $agentName,
-
-            // Current date/time
-            '{date}' => $now->format('Y-m-d'),
-            '{time}' => $now->format('H:i'),
-            '{datetime}' => $now->format('Y-m-d H:i'),
-            '{day}' => $now->format('l'),
+        // Build context - all variables passed to osTicket's VariableReplacer
+        $vars = array(
+            'ticket'   => $ticket,
+            'staff'    => $staff,
+            'date'     => $now->format('Y-m-d'),
+            'time'     => $now->format('H:i'),
+            'datetime' => $now->format('Y-m-d H:i'),
+            'day'      => $now->format('l'),
         );
-    }
 
-    /**
-     * Expands system prompt template with ticket context variables
-     *
-     * @param string $template Template string with placeholders
-     * @param Ticket $ticket Ticket instance
-     * @param Staff|null $staff Staff member (agent) instance
-     * @return string Expanded template with replaced placeholders
-     */
-    private function expandSystemPrompt($template, Ticket $ticket, $staff=null) {
-        $replacements = $this->buildTemplateReplacements($ticket, $staff);
-        return strtr($template, $replacements);
-    }
+        // Merge any extra vars (like ai_text)
+        $vars = array_merge($vars, $extraVars);
 
-    /**
-     * Expands response template with ticket and AI response data
-     *
-     * @param string $template Template string with placeholders
-     * @param Ticket $ticket Ticket instance
-     * @param string $aiText Generated AI response text
-     * @param Staff|null $staff Staff member (agent) instance
-     * @return string Expanded template with replaced placeholders
-     */
-    private function expandTemplate($template, Ticket $ticket, $aiText, $staff=null) {
-        $replacements = $this->buildTemplateReplacements($ticket, $staff);
-        $replacements['{ai_text}'] = (string)$aiText;
-        return strtr($template, $replacements);
+        // Use osTicket's native template variable replacement
+        return $ost->replaceTemplateVariables($template, $vars);
     }
 
     /**
@@ -511,20 +295,13 @@ class AIAjaxController extends AjaxController {
     private function processImageAttachments($entry, $cfg, &$imageCount, $maxImages) {
         $images = array();
 
-        // Check if we've reached the limit
         if ($imageCount >= $maxImages) {
             return $images;
         }
 
-        // Get configuration
+        $C = 'AIResponseGeneratorConstants';
         $includeInline = (bool)$cfg->get('include_inline_images');
-        $maxSizeMB = $cfg->get('max_image_size_mb');
-        if ($maxSizeMB === null || $maxSizeMB === '' || !is_numeric($maxSizeMB) || $maxSizeMB < 0) {
-            $maxSizeMB = AIResponseGeneratorConstants::DEFAULT_MAX_IMAGE_SIZE_MB;
-        } else {
-            $maxSizeMB = floatval($maxSizeMB);
-        }
-        $maxSizeBytes = $maxSizeMB * 1048576; // Convert MB to bytes
+        $maxSizeBytes = $C::getFloat($cfg, 'max_image_size_mb') * 1048576;
 
         // Get attachments from entry
         $attachments = $entry->getAttachments();

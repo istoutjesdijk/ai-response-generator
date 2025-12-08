@@ -83,6 +83,28 @@ An AI-powered response generator plugin for osTicket that helps agents generate 
 - **Response Template**: Format output with placeholders
 - **Show Instructions Popup**: Allow agents to add special instructions per response
 - **Enable Streaming**: Real-time typewriter effect (default: disabled)
+- **Include Internal Notes**: Include internal notes in AI context (default: enabled)
+
+### Template Variables
+
+Both System Prompt and Response Template support osTicket variables:
+
+| Variable | Description |
+|----------|-------------|
+| `%{ticket.number}` | Ticket number |
+| `%{ticket.subject}` | Ticket subject |
+| `%{ticket.user.name}` | Customer name |
+| `%{ticket.user.email}` | Customer email |
+| `%{ticket.dept}` | Department name |
+| `%{ticket.status}` | Ticket status |
+| `%{ticket.priority}` | Priority level |
+| `%{ticket.create_date}` | Creation date |
+| `%{staff.name}` | Agent name |
+| `%{date}` | Current date (Y-m-d) |
+| `%{time}` | Current time (H:i) |
+| `%{datetime}` | Current date & time |
+| `%{day}` | Day of week |
+| `%{ai_text}` | AI response (template only) |
 
 ### Vision Support Configuration
 
@@ -106,6 +128,10 @@ An AI-powered response generator plugin for osTicket that helps agents generate 
 5. **Review** and edit the generated response as needed
 6. **Send** the reply to the customer
 
+**Keyboard shortcuts in instructions popup:**
+- **Ctrl+Enter** (or Cmd+Enter): Submit and generate
+- **Escape**: Close popup
+
 ### With Vision Support
 
 When vision is enabled and a customer includes screenshots or images:
@@ -123,9 +149,11 @@ Configure multiple plugin instances for:
 ## 🔒 Security
 
 - Only staff with **reply permission** can use AI response generation
-- API keys stored securely using osTicket's `PasswordField`
+- API keys stored securely using osTicket's `PasswordField` (encrypted)
 - All requests go through backend (no client-side API calls)
 - Vision support processes images server-side only
+- CSRF token validation on all AJAX requests
+- Extra instructions input limited to 500 characters
 
 ## 🐛 Troubleshooting
 

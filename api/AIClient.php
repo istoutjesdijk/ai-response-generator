@@ -10,242 +10,107 @@ class AIClient {
     private $baseUrl;
     private $apiKey;
 
-    /**
-     * Constructor
-     *
-     * @param string $baseUrl Base API URL
-     * @param string|null $apiKey Optional API key for authentication
-     */
-    function __construct($baseUrl, $apiKey=null) {
+    function __construct($baseUrl, $apiKey = null) {
         $this->baseUrl = rtrim($baseUrl, '/');
         $this->apiKey = $apiKey;
     }
 
     /**
-     * Generates AI response using OpenAI or Anthropic API with streaming support
-     *
-     * @param string $model Model name to use (e.g., 'gpt-4', 'claude-3-opus')
-     * @param array $messages Array of message objects with 'role' and 'content' keys
-     * @param float|null $temperature Temperature for response generation (0.0-2.0)
-     * @param int|null $max_tokens Maximum tokens to generate
-     * @param string|null $max_tokens_param Parameter name for max tokens (API-specific)
-     * @param int|null $timeout Request timeout in seconds
-     * @param string $provider Provider type: 'openai', 'anthropic', or 'auto' for auto-detection
-     * @param string|null $anthropicVersion Anthropic API version header value
-     * @param callable|null $streamCallback Callback function for streaming chunks: function($chunk)
-     * @return string Generated response text (full text when not streaming, empty when streaming)
-     * @throws Exception On API errors or network failures
+     * Generates AI response with optional streaming support
      */
     function generateResponse($model, array $messages, $temperature = null, $max_tokens = null, $max_tokens_param = null, $timeout = null, $provider = 'auto', $anthropicVersion = null, $streamCallback = null) {
-        // Apply defaults
-        $temperature = $temperature ?? AIResponseGeneratorConstants::DEFAULT_TEMPERATURE;
-        $max_tokens = $max_tokens ?? AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS;
-        $max_tokens_param = $max_tokens_param ?? AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS_PARAM;
-        $timeout = $timeout ?? AIResponseGeneratorConstants::DEFAULT_TIMEOUT;
-        $anthropicVersion = $anthropicVersion ?? AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION;
-        // Auto-detect provider if requested
-        if ($provider === 'auto') {
-            if (stripos($this->baseUrl, 'anthropic.com') !== false || stripos($model, 'claude') === 0 || preg_match('#/v1/messages$#', $this->baseUrl)) {
-                $provider = 'anthropic';
-            } else {
-                $provider = 'openai';
-            }
-        }
+        $C = 'AIResponseGeneratorConstants';
+        $temperature = $temperature ?? $C::DEFAULT_TEMPERATURE;
+        $max_tokens = $max_tokens ?? $C::DEFAULT_MAX_TOKENS;
+        $max_tokens_param = $max_tokens_param ?? $C::DEFAULT_MAX_TOKENS_PARAM;
+        $timeout = $timeout ?? $C::DEFAULT_TIMEOUT;
+        $anthropicVersion = $anthropicVersion ?? $C::DEFAULT_ANTHROPIC_VERSION;
+
+        $provider = $this->detectProvider($provider, $model);
+        $isStreaming = is_callable($streamCallback);
 
         if ($provider === 'anthropic') {
-            // Anthropic Claude messages API
-            $url = $this->baseUrl;
-            // Normalize to one of:
-            // - https://host/v1/messages
-            // - https://host/.../messages (already full path)
-            if (preg_match('#/v1/messages/?$#', $url)) {
-                // already correct
-            } elseif (preg_match('#/v1/?$#', $url)) {
-                $url = rtrim($url, '/') . '/messages';
-            } elseif (preg_match('#/messages/?$#', $url)) {
-                // already ends with messages
-            } else {
-                $url = rtrim($url, '/') . '/v1/messages';
-            }
-
-            // Extract system content(s) and strip from message list (Claude expects separate 'system')
-            $systemParts = array();
-            $claudeMsgs = array();
-            foreach ($messages as $m) {
-                $role = $m['role'] ?? 'user';
-                $content = $m['content'];
-
-                // For system messages, extract text (content is always string for system)
-                if ($role === 'system') {
-                    if (strlen(trim((string)$content))) $systemParts[] = (string)$content;
-                    continue;
-                }
-
-                // Keep only user/assistant roles for Anthropic
-                if ($role === 'user' || $role === 'assistant') {
-                    // Content can be string or array (for vision support)
-                    // Anthropic natively supports the content array format we're using
-                    $claudeMsgs[] = array('role' => $role, 'content' => $content);
-                }
-            }
-            $system = trim(implode("\n\n", $systemParts));
-
-            $payload = array(
-                'model' => $model,
-                'messages' => $claudeMsgs,
-                'temperature' => $temperature,
-                // Anthropic always expects 'max_tokens'
-                'max_tokens' => (int)$max_tokens,
-            );
-            if ($system !== '') $payload['system'] = $system;
-            // Enable streaming if callback provided
-            $isStreaming = is_callable($streamCallback);
-            if ($isStreaming) $payload['stream'] = true;
-
-            $headers = array('Content-Type: application/json');
-            if ($this->apiKey)
-                $headers[] = 'x-api-key: ' . $this->apiKey;
-            // Required version header
-            $headers[] = 'anthropic-version: ' . $anthropicVersion;
-
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, !$isStreaming); // Disable when streaming
-            curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-
-            // Handle streaming with callback
-            if ($isStreaming) {
-                $buffer = '';
-                curl_setopt($ch, CURLOPT_WRITEFUNCTION, function($ch, $data) use (&$buffer, $streamCallback) {
-                    $buffer .= $data;
-                    $lines = explode("\n", $buffer);
-                    // Keep last incomplete line in buffer
-                    $buffer = array_pop($lines);
-
-                    foreach ($lines as $line) {
-                        $line = trim($line);
-                        if (empty($line) || $line === 'event: message_start' || $line === 'event: content_block_start' ||
-                            $line === 'event: content_block_stop' || $line === 'event: message_stop' || $line === 'event: ping') {
-                            continue;
-                        }
-
-                        // Parse SSE data: lines
-                        if (strpos($line, 'data: ') === 0) {
-                            $json_str = substr($line, 6); // Remove 'data: ' prefix
-                            if ($json_str === '[DONE]') continue;
-
-                            $chunk = JsonDataParser::decode($json_str, true);
-                            // Anthropic streaming format: {"type":"content_block_delta","delta":{"type":"text","text":"..."}}
-                            if (isset($chunk['type']) && $chunk['type'] === 'content_block_delta' &&
-                                isset($chunk['delta']['text'])) {
-                                call_user_func($streamCallback, $chunk['delta']['text']);
-                            }
-                        }
-                    }
-                    return strlen($data);
-                });
-            }
-
-            $resp = curl_exec($ch);
-            if ($resp === false) {
-                $err = curl_error($ch);
-                curl_close($ch);
-                throw new Exception('cURL error: ' . $err);
-            }
-            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-
-            // When streaming, response is already sent via callback
-            if ($isStreaming) {
-                if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD)
-                    throw new Exception('API error: HTTP ' . $code);
-                return '';
-            }
-
-            $json = JsonDataParser::decode($resp, true);
-            if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD)
-                throw new Exception('API error: HTTP ' . $code . ' (Endpoint: ' . (parse_url($url, PHP_URL_PATH) ?: '') . ') ' . ($json['error']['message'] ?? $resp));
-
-            // Anthropic messages response shape
-            if (isset($json['content']) && is_array($json['content'])) {
-                // Concatenate all text blocks in order
-                $parts = array();
-                foreach ($json['content'] as $block) {
-                    if (is_array($block) && ($block['type'] ?? '') === 'text' && isset($block['text'])) {
-                        $parts[] = (string)$block['text'];
-                    }
-                }
-                if ($parts) return trim(implode("\n", $parts));
-            }
-            if (isset($json['content']) && is_string($json['content']))
-                return trim((string)$json['content']);
-
-            // Fallback: no text content returned
-            return '';
+            return $this->callAnthropic($model, $messages, $temperature, $max_tokens, $anthropicVersion, $timeout, $isStreaming, $streamCallback);
         }
+        return $this->callOpenAI($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $isStreaming, $streamCallback);
+    }
 
-        // Default: OpenAI-compatible Chat Completions
-        // Detect whether the given base URL points to a specific endpoint
-        // If it appears to be the bare API root, append /chat/completions
+    /**
+     * Detect provider from URL and model name
+     */
+    private function detectProvider($provider, $model) {
+        if ($provider !== 'auto') return $provider;
+
+        if (stripos($this->baseUrl, 'anthropic.com') !== false ||
+            stripos($model, 'claude') === 0 ||
+            preg_match('#/v1/messages$#', $this->baseUrl)) {
+            return 'anthropic';
+        }
+        return 'openai';
+    }
+
+    /**
+     * Call Anthropic Claude API
+     */
+    private function callAnthropic($model, $messages, $temperature, $max_tokens, $anthropicVersion, $timeout, $isStreaming, $streamCallback) {
+        $url = $this->normalizeAnthropicUrl();
+
+        // Extract system messages and convert to Claude format
+        list($system, $claudeMsgs) = $this->prepareAnthropicMessages($messages);
+
+        $payload = array(
+            'model' => $model,
+            'messages' => $claudeMsgs,
+            'temperature' => $temperature,
+            'max_tokens' => (int)$max_tokens,
+        );
+        if ($system !== '') $payload['system'] = $system;
+        if ($isStreaming) $payload['stream'] = true;
+
+        $headers = array('Content-Type: application/json', 'anthropic-version: ' . $anthropicVersion);
+        if ($this->apiKey) $headers[] = 'x-api-key: ' . $this->apiKey;
+
+        return $this->executeRequest($url, $payload, $headers, $timeout, $isStreaming, $streamCallback, 'anthropic');
+    }
+
+    /**
+     * Call OpenAI-compatible API
+     */
+    private function callOpenAI($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $isStreaming, $streamCallback) {
         $url = $this->baseUrl;
         if (!preg_match('#/chat/(?:completions|complete)$#', $url)) {
             $url .= '/chat/completions';
         }
 
-        // Transform messages for OpenAI format (convert Anthropic-style images to OpenAI format)
-        $openaiMessages = $this->transformMessagesForOpenAI($messages);
-
         $payload = array(
             'model' => $model,
-            'messages' => $openaiMessages,
+            'messages' => $this->transformMessagesForOpenAI($messages),
             'temperature' => $temperature,
+            $max_tokens_param => $max_tokens,
         );
-        // Add the correct parameter name for max tokens
-        $payload[$max_tokens_param ?: 'max_tokens'] = $max_tokens;
-        // Enable streaming if callback provided
-        $isStreaming = is_callable($streamCallback);
         if ($isStreaming) $payload['stream'] = true;
 
         $headers = array('Content-Type: application/json');
-        if ($this->apiKey)
-            $headers[] = 'Authorization: Bearer ' . $this->apiKey;
+        if ($this->apiKey) $headers[] = 'Authorization: Bearer ' . $this->apiKey;
 
+        return $this->executeRequest($url, $payload, $headers, $timeout, $isStreaming, $streamCallback, 'openai');
+    }
+
+    /**
+     * Execute HTTP request with optional streaming
+     */
+    private function executeRequest($url, $payload, $headers, $timeout, $isStreaming, $streamCallback, $provider) {
         $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, !$isStreaming); // Disable when streaming
-        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout); // configurable timeout
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+        curl_setopt_array($ch, array(
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_POSTFIELDS => json_encode($payload),
+            CURLOPT_RETURNTRANSFER => !$isStreaming,
+        ));
 
-        // Handle streaming with callback
         if ($isStreaming) {
-            $buffer = '';
-            curl_setopt($ch, CURLOPT_WRITEFUNCTION, function($ch, $data) use (&$buffer, $streamCallback) {
-                $buffer .= $data;
-                $lines = explode("\n", $buffer);
-                // Keep last incomplete line in buffer
-                $buffer = array_pop($lines);
-
-                foreach ($lines as $line) {
-                    $line = trim($line);
-                    if (empty($line)) continue;
-
-                    // Parse SSE data: lines
-                    if (strpos($line, 'data: ') === 0) {
-                        $json_str = substr($line, 6); // Remove 'data: ' prefix
-                        if ($json_str === '[DONE]') continue;
-
-                        $chunk = JsonDataParser::decode($json_str, true);
-                        // OpenAI streaming format: {"choices":[{"delta":{"content":"..."}}]}
-                        if (isset($chunk['choices'][0]['delta']['content'])) {
-                            call_user_func($streamCallback, $chunk['choices'][0]['delta']['content']);
-                        }
-                    }
-                }
-                return strlen($data);
-            });
+            $this->setupStreamingHandler($ch, $streamCallback, $provider);
         }
 
         $resp = curl_exec($ch);
@@ -254,40 +119,147 @@ class AIClient {
             curl_close($ch);
             throw new Exception('cURL error: ' . $err);
         }
+
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        // When streaming, response is already sent via callback
         if ($isStreaming) {
             if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD)
                 throw new Exception('API error: HTTP ' . $code);
             return '';
         }
 
+        return $this->parseResponse($resp, $code, $url, $provider);
+    }
+
+    /**
+     * Setup streaming handler for cURL
+     */
+    private function setupStreamingHandler($ch, $streamCallback, $provider) {
+        $buffer = '';
+        $contentPath = $provider === 'anthropic'
+            ? array('delta', 'text')
+            : array('choices', 0, 'delta', 'content');
+
+        curl_setopt($ch, CURLOPT_WRITEFUNCTION, function($ch, $data) use (&$buffer, $streamCallback, $provider, $contentPath) {
+            $buffer .= $data;
+            $lines = explode("\n", $buffer);
+            $buffer = array_pop($lines);
+
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if (empty($line) || strpos($line, 'event:') === 0) continue;
+
+                if (strpos($line, 'data: ') === 0) {
+                    $json_str = substr($line, 6);
+                    if ($json_str === '[DONE]') continue;
+
+                    $chunk = JsonDataParser::decode($json_str, true);
+
+                    // Anthropic: check for content_block_delta type
+                    if ($provider === 'anthropic') {
+                        if (isset($chunk['type']) && $chunk['type'] === 'content_block_delta' && isset($chunk['delta']['text'])) {
+                            call_user_func($streamCallback, $chunk['delta']['text']);
+                        }
+                    } else {
+                        // OpenAI format
+                        if (isset($chunk['choices'][0]['delta']['content'])) {
+                            call_user_func($streamCallback, $chunk['choices'][0]['delta']['content']);
+                        }
+                    }
+                }
+            }
+            return strlen($data);
+        });
+    }
+
+    /**
+     * Parse API response
+     */
+    private function parseResponse($resp, $code, $url, $provider) {
         $json = JsonDataParser::decode($resp, true);
-        if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD)
-            throw new Exception('API error: HTTP ' . $code . ' (Endpoint: ' . (parse_url($url, PHP_URL_PATH) ?: '') . ') ' . ($json['error']['message'] ?? $resp));
 
-        // OpenAI-style response
+        if ($code >= AIResponseGeneratorConstants::HTTP_ERROR_THRESHOLD) {
+            $path = parse_url($url, PHP_URL_PATH) ?: '';
+            $msg = $json['error']['message'] ?? $resp;
+            throw new Exception("API error: HTTP {$code} (Endpoint: {$path}) {$msg}");
+        }
+
+        if ($provider === 'anthropic') {
+            return $this->parseAnthropicResponse($json);
+        }
+        return $this->parseOpenAIResponse($json, $resp);
+    }
+
+    /**
+     * Parse Anthropic response
+     */
+    private function parseAnthropicResponse($json) {
+        if (isset($json['content']) && is_array($json['content'])) {
+            $parts = array();
+            foreach ($json['content'] as $block) {
+                if (is_array($block) && ($block['type'] ?? '') === 'text' && isset($block['text'])) {
+                    $parts[] = (string)$block['text'];
+                }
+            }
+            if ($parts) return trim(implode("\n", $parts));
+        }
+        if (isset($json['content']) && is_string($json['content'])) {
+            return trim((string)$json['content']);
+        }
+        return '';
+    }
+
+    /**
+     * Parse OpenAI response
+     */
+    private function parseOpenAIResponse($json, $resp) {
         if (isset($json['choices'][0]['message']['content']))
-            return (string) $json['choices'][0]['message']['content'];
+            return (string)$json['choices'][0]['message']['content'];
         if (isset($json['choices'][0]['text']))
-            return (string) $json['choices'][0]['text'];
-
-        // Some compatible servers may use 'output'
+            return (string)$json['choices'][0]['text'];
         if (isset($json['output']))
-            return (string) $json['output'];
-
-        // Fallback: return the whole body, best-effort
+            return (string)$json['output'];
         return is_string($resp) ? $resp : '';
     }
 
     /**
-     * Transforms messages from Anthropic format to OpenAI format
-     * Converts image blocks from Anthropic's format to OpenAI's image_url format
-     *
-     * @param array $messages Messages in Anthropic format
-     * @return array Messages in OpenAI format
+     * Normalize Anthropic API URL
+     */
+    private function normalizeAnthropicUrl() {
+        $url = $this->baseUrl;
+        if (preg_match('#/v1/messages/?$#', $url)) return $url;
+        if (preg_match('#/v1/?$#', $url)) return rtrim($url, '/') . '/messages';
+        if (preg_match('#/messages/?$#', $url)) return $url;
+        return rtrim($url, '/') . '/v1/messages';
+    }
+
+    /**
+     * Prepare messages for Anthropic format
+     */
+    private function prepareAnthropicMessages($messages) {
+        $systemParts = array();
+        $claudeMsgs = array();
+
+        foreach ($messages as $m) {
+            $role = $m['role'] ?? 'user';
+            $content = $m['content'];
+
+            if ($role === 'system') {
+                if (strlen(trim((string)$content))) $systemParts[] = (string)$content;
+                continue;
+            }
+
+            if ($role === 'user' || $role === 'assistant') {
+                $claudeMsgs[] = array('role' => $role, 'content' => $content);
+            }
+        }
+
+        return array(trim(implode("\n\n", $systemParts)), $claudeMsgs);
+    }
+
+    /**
+     * Transform messages from internal format to OpenAI format
      */
     private function transformMessagesForOpenAI($messages) {
         $transformed = array();
@@ -296,43 +268,26 @@ class AIClient {
             $role = $msg['role'] ?? 'user';
             $content = $msg['content'];
 
-            // If content is a string, no transformation needed
             if (is_string($content)) {
                 $transformed[] = array('role' => $role, 'content' => $content);
                 continue;
             }
 
-            // If content is an array, transform image blocks to OpenAI format
             if (is_array($content)) {
                 $openaiContent = array();
-
                 foreach ($content as $block) {
                     $type = $block['type'] ?? '';
-
                     if ($type === 'text') {
-                        // Text block - pass through
-                        $openaiContent[] = array(
-                            'type' => 'text',
-                            'text' => $block['text'] ?? ''
-                        );
+                        $openaiContent[] = array('type' => 'text', 'text' => $block['text'] ?? '');
                     } elseif ($type === 'image' && isset($block['source'])) {
-                        // Image block - convert from Anthropic to OpenAI format
-                        $source = $block['source'];
-                        $mediaType = $source['media_type'] ?? 'image/jpeg';
-                        $base64Data = $source['data'] ?? '';
-
-                        // OpenAI expects: data:{media_type};base64,{data}
-                        $dataUrl = "data:{$mediaType};base64,{$base64Data}";
-
+                        $mediaType = $block['source']['media_type'] ?? 'image/jpeg';
+                        $base64Data = $block['source']['data'] ?? '';
                         $openaiContent[] = array(
                             'type' => 'image_url',
-                            'image_url' => array(
-                                'url' => $dataUrl
-                            )
+                            'image_url' => array('url' => "data:{$mediaType};base64,{$base64Data}")
                         );
                     }
                 }
-
                 $transformed[] = array('role' => $role, 'content' => $openaiContent);
             }
         }

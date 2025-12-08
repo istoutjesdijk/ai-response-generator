@@ -114,7 +114,7 @@
       '<div class="ai-modal-overlay">' +
         '<div class="ai-modal">' +
           '<div class="ai-modal-header">' +
-            '<h3>AI Response Instructions</h3>' +
+            '<h3><i class="icon-magic"></i> AI Response Instructions</h3>' +
             '<button class="ai-modal-close" title="Close">&times;</button>' +
           '</div>' +
           '<div class="ai-modal-body">' +
@@ -127,8 +127,8 @@
             '</div>' +
           '</div>' +
           '<div class="ai-modal-footer">' +
-            '<button class="ai-modal-btn ai-modal-cancel">Cancel</button>' +
-            '<button class="ai-modal-btn ai-modal-generate">Generate Response</button>' +
+            '<button class="button ai-modal-btn ai-modal-cancel">Cancel</button>' +
+            '<button class="button ai-modal-btn ai-modal-generate">Generate Response</button>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -202,7 +202,7 @@
       '<div class="ai-streaming-overlay">' +
         '<div class="ai-streaming-modal">' +
           '<div class="ai-streaming-header">' +
-            '<h3>AI Response Generating...</h3>' +
+            '<h3><i class="icon-spinner icon-spin"></i> AI Response Generating...</h3>' +
           '</div>' +
           '<div class="ai-streaming-body">' +
             '<div class="ai-streaming-content"></div>' +

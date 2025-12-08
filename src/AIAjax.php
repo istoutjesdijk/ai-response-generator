@@ -21,9 +21,8 @@ class AIAjaxController extends AjaxController {
             return;
 
         $token = $_POST['__CSRFToken__'] ?? $_SERVER['HTTP_X_CSRFTOKEN'] ?? null;
-        if (!$ost || !$ost->getCSRF() || !$ost->getCSRF()->validateToken($token)) {
-            Http::response(403, $this->encode(array('ok' => false, 'error' => __('CSRF token validation failed'))));
-        }
+        if (!$ost || !$ost->getCSRF() || !$ost->getCSRF()->validateToken($token))
+            $this->exerr(403, __('CSRF token validation failed'));
     }
 
     /**
@@ -38,11 +37,11 @@ class AIAjaxController extends AjaxController {
 
         $ticket_id = (int) ($_POST['ticket_id'] ?? $_GET['ticket_id'] ?? 0);
         if (!$ticket_id || !($ticket = Ticket::lookup($ticket_id)))
-            Http::response(404, $this->encode(array('ok' => false, 'error' => __('Unknown ticket'))));
+            $this->exerr(404, __('Unknown ticket'));
 
         $role = $ticket->getRole($thisstaff);
         if (!$role || !$role->hasPerm(Ticket::PERM_REPLY))
-            Http::response(403, $this->encode(array('ok' => false, 'error' => __('Access denied'))));
+            $this->exerr(403, __('Access denied'));
 
         // Load plugin config (support per-instance selection)
         $cfg = null;
@@ -55,7 +54,7 @@ class AIAjaxController extends AjaxController {
         if (!$cfg)
             $cfg = AIResponseGeneratorPlugin::getActiveConfig();
         if (!$cfg)
-            Http::response(500, $this->encode(array('ok' => false, 'error' => __('Plugin not configured'))));
+            $this->exerr(500, __('Plugin not configured'));
 
         return array($ticket, $cfg, $thisstaff);
     }
@@ -157,7 +156,7 @@ class AIAjaxController extends AjaxController {
         $model = $cfg->get('model');
 
         if (!$api_url || !$model)
-            Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
+            $this->exerr(400, __('Missing API URL or model'));
 
         $messages = $this->buildMessages($ticket, $cfg, $staff);
 
@@ -217,7 +216,7 @@ class AIAjaxController extends AjaxController {
         $model = $cfg->get('model');
 
         if (!$api_url || !$model)
-            Http::response(400, $this->encode(array('ok' => false, 'error' => __('Missing API URL or model'))));
+            $this->exerr(400, __('Missing API URL or model'));
 
         $messages = $this->buildMessages($ticket, $cfg, $staff);
 

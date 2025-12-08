@@ -79,7 +79,6 @@ class AIClient {
     private function callOpenAI($model, $messages, $temperature, $max_tokens, $max_tokens_param, $timeout, $isStreaming, $streamCallback) {
         $url = $this->baseUrl;
         if (!preg_match('#/responses$#', $url)) {
-            $url = preg_replace('#/chat/completions$#', '', $url);
             $url = rtrim($url, '/') . '/responses';
         }
 
@@ -159,7 +158,7 @@ class AIClient {
                     $chunk = JsonDataParser::decode($json_str, true);
 
                     if ($provider === 'anthropic') {
-                        // Anthropic: check for content_block_delta type
+                        // Anthropic: content_block_delta event
                         if (isset($chunk['type']) && $chunk['type'] === 'content_block_delta' && isset($chunk['delta']['text'])) {
                             call_user_func($streamCallback, $chunk['delta']['text']);
                         }
@@ -167,10 +166,6 @@ class AIClient {
                         // OpenAI Responses API: response.output_text.delta event
                         if (isset($chunk['type']) && $chunk['type'] === 'response.output_text.delta' && isset($chunk['delta'])) {
                             call_user_func($streamCallback, $chunk['delta']);
-                        }
-                        // Legacy Chat Completions format fallback
-                        elseif (isset($chunk['choices'][0]['delta']['content'])) {
-                            call_user_func($streamCallback, $chunk['choices'][0]['delta']['content']);
                         }
                     }
                 }
@@ -239,13 +234,7 @@ class AIClient {
             if ($parts) return trim(implode("\n", $parts));
         }
 
-        // Legacy fallbacks for compatibility
-        if (isset($json['choices'][0]['message']['content']))
-            return (string)$json['choices'][0]['message']['content'];
-        if (isset($json['choices'][0]['text']))
-            return (string)$json['choices'][0]['text'];
-
-        return is_string($resp) ? $resp : '';
+        return '';
     }
 
     /**

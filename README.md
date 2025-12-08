@@ -63,9 +63,9 @@ An AI-powered response generator plugin for osTicket that helps agents generate 
 ### Basic Setup
 
 1. **API URL**: Your AI provider endpoint
-   - OpenAI: `https://api.openai.com/v1/chat/completions`
+   - OpenAI: `https://api.openai.com/v1/responses`
    - Anthropic: `https://api.anthropic.com/v1/messages`
-   - Custom: Your OpenAI-compatible endpoint
+   - Custom: Your OpenAI-compatible Responses API endpoint
 
 2. **API Key**: Your authentication key
 

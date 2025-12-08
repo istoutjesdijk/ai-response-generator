@@ -7,12 +7,13 @@
   position: relative;
 }
 
-/* Hide icon during loading */
+/* Hide icon but preserve space during loading */
 .ai-loading i,
 .ai-loading .icon-magic {
-  display: none !important;
+  visibility: hidden !important;
 }
 
+/* Spinner positioned over the hidden icon */
 .ai-loading:after {
   content: '';
   position: absolute;

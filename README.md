@@ -186,13 +186,16 @@ Configure multiple plugin instances for:
 
 | Feature | Original | This Fork |
 |---------|----------|-----------|
-| OpenAI Responses API | ❌ | ✅ Modern API |
-| File Attachments | ❌ | ✅ PDF, TXT, CSV, etc. |
-| Vision Support | ❌ | ✅ GPT-4o & Claude 3+ |
-| Streaming Responses | ❌ | ✅ Real-time SSE |
-| Message Type Labels | ❌ | ✅ Customer/Agent/Note |
-| Performance Optimized | ❌ | ✅ QuerySet methods |
-| Anthropic Support | ❌ | ✅ Full Claude support |
+| API | Chat Completions | ✅ Responses API |
+| Anthropic Claude | ❌ | ✅ Full support |
+| Streaming | ❌ | ✅ Real-time SSE |
+| Vision/Images | ❌ | ✅ GPT-4o & Claude 3+ |
+| File Attachments | ❌ | ✅ PDF, TXT, CSV |
+| Ticket Subject | ❌ | ✅ Included in context |
+| Thread Context | ❌ | ✅ Recent messages |
+| Internal Notes | ❌ | ✅ Optional in context |
+| Template Variables | Basic | ✅ Full osTicket vars |
+| Instructions Popup | ❌ | ✅ Per-response guidance |
 
 ## 🙏 Credits
 

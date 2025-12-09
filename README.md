@@ -14,6 +14,13 @@ An AI-powered response generator plugin for osTicket that helps agents generate 
 
 ### 🚀 New in This Fork
 
+#### 🔄 OpenAI Responses API (v0.4.0)
+- **Migrated to OpenAI Responses API**: Modern API with better streaming support
+- **File attachments support**: Send PDF, TXT, CSV and other documents to the AI
+- **Improved streaming**: Native SSE event parsing for real-time responses
+- **Configurable defaults**: Optimized default values (timeout: 10s, context: 3 messages)
+- **Placeholder hints**: Config fields show default values as placeholder text
+
 #### 👁️ Vision Support (v0.3.0)
 - **AI Image Analysis**: Send image attachments to vision-capable models (GPT-4o, Claude 3+)
 - Analyze screenshots, error messages, product photos, documents
@@ -34,6 +41,7 @@ An AI-powered response generator plugin for osTicket that helps agents generate 
 - Fixed message ordering (newest first → most relevant context)
 
 #### 🐛 Bug Fixes
+- **v0.3.1**: Fixed getPoster() returning string instead of object
 - **v0.2.1**: Fixed pjax navigation ticket context bug
 - **v0.2.2**: Fixed thread message order (was sending oldest instead of newest)
 
@@ -77,8 +85,8 @@ An AI-powered response generator plugin for osTicket that helps agents generate 
 
 - **Max Tokens**: Response length limit (default: 512)
 - **Temperature**: Creativity level 0.0-2.0 (default: 1.0)
-- **Timeout**: API request timeout in seconds (default: 60)
-- **Max Thread Entries**: Number of recent messages to include (default: 20)
+- **Timeout**: API request timeout in seconds (default: 10)
+- **Max Thread Entries**: Number of recent messages to include (default: 3)
 - **System Prompt**: Custom instructions for AI behavior
 - **Response Template**: Format output with placeholders
 - **Show Instructions Popup**: Allow agents to add special instructions per response
@@ -178,11 +186,12 @@ Configure multiple plugin instances for:
 
 | Feature | Original | This Fork |
 |---------|----------|-----------|
+| OpenAI Responses API | ❌ | ✅ Modern API |
+| File Attachments | ❌ | ✅ PDF, TXT, CSV, etc. |
 | Vision Support | ❌ | ✅ GPT-4o & Claude 3+ |
 | Streaming Responses | ❌ | ✅ Real-time SSE |
 | Message Type Labels | ❌ | ✅ Customer/Agent/Note |
 | Performance Optimized | ❌ | ✅ QuerySet methods |
-| Bug Fixes | - | ✅ Pjax, message order |
 | Anthropic Support | ❌ | ✅ Full Claude support |
 
 ## 🙏 Credits

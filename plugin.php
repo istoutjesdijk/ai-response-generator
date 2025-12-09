@@ -1,7 +1,7 @@
 <?php
 return array(
     'id' =>             'ai-response-generator:osticket',
-    'version' =>        '0.3.0',
+    'version' =>        '0.4.0',
     'name' =>           'AI Response Generator',
     'description' =>    'AI-powered response generation with vision support, streaming, and multi-provider compatibility (OpenAI, Anthropic). Generate intelligent replies with image analysis and configurable templates.',
     'author' =>         'Mateusz Hajder (original), Ide Stoutjesdijk (enhanced fork)',

@@ -58,7 +58,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION,
             'hint' => __('Anthropic API version header (only for Claude models).'),
-            'configuration' => array('size' => 20, 'length' => 32),
+            'configuration' => array('size' => 20, 'length' => 32, 'placeholder' => AIResponseGeneratorConstants::DEFAULT_ANTHROPIC_VERSION),
         ));
 
         $fields['max_tokens_param'] = new TextboxField(array(
@@ -66,7 +66,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS_PARAM,
             'hint' => __('Parameter name for max tokens (e.g. max_output_tokens for Responses API, max_tokens for Anthropic).'),
-            'configuration' => array('size' => 40, 'length' => 64),
+            'configuration' => array('size' => 40, 'length' => 64, 'placeholder' => AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS_PARAM),
         ));
 
         $fields['max_tokens'] = new TextboxField(array(
@@ -74,7 +74,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS,
             'hint' => __('Maximum number of tokens for the AI response.'),
-            'configuration' => array('size' => 10, 'length' => 10),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => AIResponseGeneratorConstants::DEFAULT_MAX_TOKENS),
         ));
 
         $fields['system_prompt'] = new TextareaField(array(
@@ -104,7 +104,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_TEMPERATURE,
             'hint' => __('Temperature for the AI model (0.0-2.0). Lower = more deterministic.'),
-            'configuration' => array('size' => 10, 'length' => 10),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => AIResponseGeneratorConstants::DEFAULT_TEMPERATURE),
         ));
 
         $fields['timeout'] = new TextboxField(array(
@@ -112,7 +112,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_TIMEOUT,
             'hint' => __('Timeout for the API request in seconds.'),
-            'configuration' => array('size' => 10, 'length' => 10),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => AIResponseGeneratorConstants::DEFAULT_TIMEOUT),
         ));
 
         $fields['max_thread_entries'] = new TextboxField(array(
@@ -120,7 +120,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_MAX_THREAD_ENTRIES,
             'hint' => __('Maximum number of ticket messages to include in the AI context.'),
-            'configuration' => array('size' => 10, 'length' => 10),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => AIResponseGeneratorConstants::DEFAULT_MAX_THREAD_ENTRIES),
         ));
 
         $fields['include_internal_notes'] = new BooleanField(array(
@@ -168,7 +168,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES,
             'hint' => __('Maximum images per AI request. OpenAI: max 10, Anthropic: max 100.'),
-            'configuration' => array('size' => 10, 'length' => 10),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => AIResponseGeneratorConstants::DEFAULT_MAX_IMAGES),
         ));
 
         $fields['max_files'] = new TextboxField(array(
@@ -176,7 +176,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_MAX_FILES,
             'hint' => __('Maximum document files per AI request.'),
-            'configuration' => array('size' => 10, 'length' => 10),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => AIResponseGeneratorConstants::DEFAULT_MAX_FILES),
         ));
 
         $fields['max_attachment_size_mb'] = new TextboxField(array(
@@ -184,7 +184,7 @@ class AIResponseGeneratorPluginConfig extends PluginConfig {
             'required' => false,
             'default' => AIResponseGeneratorConstants::DEFAULT_MAX_IMAGE_SIZE_MB,
             'hint' => __('Maximum size per attachment in megabytes. Larger files are skipped.'),
-            'configuration' => array('size' => 10, 'length' => 10),
+            'configuration' => array('size' => 10, 'length' => 10, 'placeholder' => AIResponseGeneratorConstants::DEFAULT_MAX_IMAGE_SIZE_MB),
         ));
 
         $fields['include_inline_images'] = new BooleanField(array(

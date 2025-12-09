@@ -7,12 +7,12 @@ class AIResponseGeneratorConstants {
     // Default API configuration
     const DEFAULT_MAX_TOKENS = 512;
     const DEFAULT_TEMPERATURE = 1;
-    const DEFAULT_TIMEOUT = 60;
+    const DEFAULT_TIMEOUT = 10;
     const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
     const DEFAULT_MAX_TOKENS_PARAM = 'max_output_tokens';
 
     // Thread and content limits
-    const DEFAULT_MAX_THREAD_ENTRIES = 20;
+    const DEFAULT_MAX_THREAD_ENTRIES = 3;
     const MAX_EXTRA_INSTRUCTIONS_LENGTH = 500;
 
     // Default system prompt

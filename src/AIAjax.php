@@ -110,7 +110,7 @@ class AIAjaxController extends AjaxController {
 
             $body = ThreadEntryBody::clean($E->getBody());
             $poster = $E->getPoster();
-            $who = $poster ? $poster->getName() : 'User';
+            $who = is_object($poster) ? $poster->getName() : ($poster ?: 'User');
             $role = ($type == 'M') ? 'user' : 'assistant';
 
             // Format content

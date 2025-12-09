@@ -85,6 +85,12 @@ class AIAjaxController extends AjaxController {
             $messages[] = array('role' => 'system', 'content' => "Special instructions for this response: " . $extra);
         }
 
+        // Ticket subject as context
+        $subject = $ticket->getSubject();
+        if ($subject) {
+            $messages[] = array('role' => 'user', 'content' => sprintf('[Ticket Subject] %s', $subject));
+        }
+
         // Thread entries
         $imagesEnabled = (bool)$cfg->get('enable_images');
         $filesEnabled = (bool)$cfg->get('enable_files');

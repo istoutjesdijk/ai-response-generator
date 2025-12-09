@@ -67,10 +67,19 @@
   }
 
   function setLoading($a, loading) {
+    var $icon = $a.find('i').first();
     if (loading) {
       $a.addClass('ai-loading');
+      // Swap to osTicket's native spinner icon
+      $icon.data('original-class', $icon.attr('class'));
+      $icon.attr('class', 'icon-spinner icon-spin');
     } else {
       $a.removeClass('ai-loading');
+      // Restore original icon
+      var originalClass = $icon.data('original-class');
+      if (originalClass) {
+        $icon.attr('class', originalClass);
+      }
     }
   }
 
@@ -105,7 +114,7 @@
       '<div class="ai-modal-overlay">' +
         '<div class="ai-modal">' +
           '<div class="ai-modal-header">' +
-            '<h3>AI Response Instructions</h3>' +
+            '<h3><i class="icon-magic"></i> AI Response Instructions</h3>' +
             '<button class="ai-modal-close" title="Close">&times;</button>' +
           '</div>' +
           '<div class="ai-modal-body">' +
@@ -118,8 +127,8 @@
             '</div>' +
           '</div>' +
           '<div class="ai-modal-footer">' +
-            '<button class="ai-modal-btn ai-modal-cancel">Cancel</button>' +
-            '<button class="ai-modal-btn ai-modal-generate">Generate Response</button>' +
+            '<button class="button ai-modal-btn ai-modal-cancel">Cancel</button>' +
+            '<button class="button ai-modal-btn ai-modal-generate">Generate Response</button>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -193,7 +202,7 @@
       '<div class="ai-streaming-overlay">' +
         '<div class="ai-streaming-modal">' +
           '<div class="ai-streaming-header">' +
-            '<h3>AI Response Generating...</h3>' +
+            '<h3><i class="icon-spinner icon-spin"></i> AI Response Generating...</h3>' +
           '</div>' +
           '<div class="ai-streaming-body">' +
             '<div class="ai-streaming-content"></div>' +
@@ -435,8 +444,15 @@
 
   // Helper function to get current ticket ID from URL
   function getCurrentTicketId() {
+    // Try to extract ticket ID from URL (?id=123)
     var match = window.location.search.match(/[?&]id=(\d+)/);
-    return match ? parseInt(match[1], 10) : 0;
+    if (match) return parseInt(match[1], 10);
+
+    // Fallback: try to find ticket ID in the page
+    var $ticketId = $('input[name="id"]').first();
+    if ($ticketId.length) return parseInt($ticketId.val(), 10);
+
+    return 0;
   }
 
   // Remove any previous namespaced handler and (re)bind once
@@ -446,8 +462,13 @@
     e.preventDefault();
     var $a = $(this);
 
-    // Always read ticket ID from current page URL to handle pjax navigation correctly
-    var tid = getCurrentTicketId() || $a.data('ticket-id');
+    // IMPORTANT: Always read ticket ID from current page URL, not from cached button data
+    // This fixes the issue where switching tickets via pjax would use the wrong ticket ID
+    var tid = getCurrentTicketId();
+    if (!tid) {
+      // Fallback to button data attribute only if URL parsing fails
+      tid = $a.data('ticket-id');
+    }
     if (!tid) return false;
 
     var iid = ($a.data('instance-id') || '').toString();

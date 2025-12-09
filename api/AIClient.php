@@ -155,20 +155,21 @@ class AIClient {
                 $line = trim($line);
                 if (empty($line) || strpos($line, 'event:') === 0) continue;
 
-                if (strpos($line, 'data: ') === 0) {
-                    $json_str = substr($line, 6);
+                if (strpos($line, 'data:') === 0) {
+                    $json_str = trim(substr($line, 5));
                     if ($json_str === '[DONE]') continue;
 
                     $chunk = JsonDataParser::decode($json_str, true);
+                    if (!is_array($chunk) || !isset($chunk['type'])) continue;
 
                     if ($provider === 'anthropic') {
                         // Anthropic: content_block_delta event
-                        if (isset($chunk['type']) && $chunk['type'] === 'content_block_delta' && isset($chunk['delta']['text'])) {
+                        if ($chunk['type'] === 'content_block_delta' && isset($chunk['delta']['text'])) {
                             call_user_func($streamCallback, $chunk['delta']['text']);
                         }
                     } else {
                         // OpenAI Responses API: response.output_text.delta event
-                        if (isset($chunk['type']) && $chunk['type'] === 'response.output_text.delta' && isset($chunk['delta'])) {
+                        if ($chunk['type'] === 'response.output_text.delta' && isset($chunk['delta'])) {
                             call_user_func($streamCallback, $chunk['delta']);
                         }
                     }

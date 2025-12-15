@@ -143,15 +143,16 @@ class AIResponseGeneratorPlugin extends Plugin {
         if (!$this->isTicketDetailView($object))
             return;
 
-        // Include CSS/JS assets once
+        // Include CSS/JS assets once using osTicket's native header system
+        global $ost;
         static $assets_included = false;
         if (!$assets_included) {
             $assets_included = true;
             $base = ROOT_PATH . 'include/plugins/ai-response-generator/';
             $js = $base . 'assets/js/main.js?v=' . urlencode(GIT_VERSION);
             $css = $base . 'assets/css/style.css?v=' . urlencode(GIT_VERSION);
-            echo sprintf('<link rel="stylesheet" type="text/css" href="%s"/>', $css);
-            echo sprintf('<script type="text/javascript" src="%s"></script>', $js);
+            $ost->addExtraHeader('<link rel="stylesheet" type="text/css" href="'.$css.'"/>');
+            $ost->addExtraHeader('<script type="text/javascript" src="'.$js.'"></script>', $pjax_script=true);
         }
 
         // Inline bootstrap for toolbar button injection (runs on every pjax load)
